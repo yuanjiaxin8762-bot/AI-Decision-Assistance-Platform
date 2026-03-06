@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Persona Switch · 多 Agent 决策辅助</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="auth-screen" class="auth-screen">
+    <div class="particle-layer" aria-hidden="true"></div>
+    <div class="seed-3d" aria-hidden="true">
+      <div class="seed-core"></div>
+      <div class="seed-ring ring-a"></div>
+      <div class="seed-ring ring-b"></div>
+      <div class="seed-ring ring-c"></div>
+      <div class="seed-wire wire-a"></div>
+      <div class="seed-wire wire-b"></div>
+    </div>
+    <section class="auth-card glass">
+      <div class="auth-head">
+        <div class="pill">Persona Switch</div>
+        <h2>欢迎进入你的多 Agent 宇宙</h2>
+        <p class="sub">登录后继续对话，或注册并开启人格孵化。</p>
+      </div>
+
+      <div class="auth-tabs" role="tablist" aria-label="登录注册切换">
+        <button class="tab active" id="tab-login" data-tab="login">登录</button>
+        <button class="tab" id="tab-register" data-tab="register">注册</button>
+      </div>
+
+      <form id="form-login" class="auth-form active" novalidate>
+        <label>
+          邮箱
+          <input type="email" id="login-email" placeholder="you@domain.com" required />
+        </label>
+        <label>
+          密码
+          <input type="password" id="login-password" placeholder="请输入密码" required minlength="6" />
+        </label>
+        <button class="btn breathe" type="submit">登录</button>
+        <button class="btn ghost google" type="button" id="btn-google">使用 Google 登录</button>
+      </form>
+
+      <form id="form-register" class="auth-form" novalidate>
+        <label>
+          邮箱
+          <input type="email" id="register-email" placeholder="you@domain.com" required />
+        </label>
+        <label>
+          密码
+          <input type="password" id="register-password" placeholder="至少 6 位" required minlength="6" />
+        </label>
+        <label>
+          昵称
+          <input type="text" id="register-nickname" placeholder="给自己起个名字" required />
+        </label>
+        <button class="btn breathe" type="submit">注册并进入人格孵化</button>
+      </form>
+
+      <div id="auth-feedback" class="auth-feedback" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <header class="topbar app-shell hidden">
+    <div class="logo pill">Persona Switch · Alpha</div>
+    <nav>
+      <a href="#incubate">孵化室</a>
+      <a href="#dialog">多 Agent 对话</a>
+      <a href="#matrix">决策矩阵</a>
+    </nav>
+    <div class="top-actions">
+      <select class="profile-select">
+        <option>当前人格档案 · 默认</option>
+        <option>创业者档案</option>
+        <option>投资者档案</option>
+      </select>
+      <button class="btn ghost" id="btn-back-login" type="button">返回登录页</button>
+    </div>
+  </header>
+
+  <main class="app-shell hidden">
+    <section id="hero" class="section hero">
+      <div>
+        <div class="pill">人格驱动 · 多视角决策</div>
+        <h1>Persona Switch</h1>
+        <p class="sub">基于你的个性孵化 3-5 个偏移 Agent，提供共生辩论与决策矩阵，帮助你看见更全面的自己。</p>
+        <div class="actions">
+          <button class="btn" id="btn-incubate">开始孵化</button>
+          <a class="btn ghost" href="./principle.html">查看原理</a>
+        </div>
+        <div class="badges">
+          <span class="pill">同源异相</span>
+          <span class="pill">思想内窥镜</span>
+          <span class="pill">共生协作网络</span>
+        </div>
+      </div>
+      <div class="hero-visual card">
+        <div class="iridescent-stage">
+          <div class="iridescent-sphere">
+            <div class="blob b1"></div>
+            <div class="blob b2"></div>
+            <div class="blob b3"></div>
+            <div class="caustic"></div>
+          </div>
+        </div>
+        <div class="hint">人格种子分裂 → 多 Agent</div>
+      </div>
+    </section>
+
+    <section id="incubate" class="section">
+      <div class="card incubator">
+        <div class="incubator-header">
+          <div>
+            <h2>孵化你的 Agent 宇宙</h2>
+            <p class="sub">完成 6 步：基础信息、人格罗盘、价值观、经历锚点、情境测试、Agent 定制。</p>
+          </div>
+        </div>
+
+        <div class="incubator-stepper" id="incubate-stepper">
+          <button class="step-chip active" data-jump-step="1">1 基础信息</button>
+          <button class="step-chip" data-jump-step="2">2 人格罗盘</button>
+          <button class="step-chip" data-jump-step="3">3 价值观</button>
+          <button class="step-chip" data-jump-step="4">4 经历锚点</button>
+          <button class="step-chip" data-jump-step="5">5 情境测试</button>
+          <button class="step-chip" data-jump-step="6">6 Agent孵化</button>
+        </div>
+
+        <div class="incubator-layout">
+          <div class="incubator-main">
+            <div class="step-state step-state-inline">
+              <span id="incubate-step-text">步骤 1/6：基础信息</span>
+              <div class="step-progress"><div id="incubate-progress-fill"></div></div>
+            </div>
+            <div class="incubator-body">
+              <div class="incubate-step active" data-step="1">
+                <h3>基础信息与身份锚点</h3>
+                <p class="sub">建立基础人口学与语言风格基线。</p>
+                <div class="grid two">
+                  <div class="card identity-anchor-card">
+                    <h4>身份锚点</h4>
+                    <p class="sub">无需上传头像，系统将基于你的输入自动构建初始人格雏形。</p>
+                    <div class="identity-orb">
+                      <div class="identity-grid" aria-hidden="true"></div>
+                      <div class="identity-halo halo-a" aria-hidden="true"></div>
+                      <div class="identity-halo halo-b" aria-hidden="true"></div>
+                      <div class="identity-avatar" aria-hidden="true">
+                        <span class="avatar-head"></span>
+                        <span class="avatar-torso"></span>
+                        <span class="avatar-arm arm-left"></span>
+                        <span class="avatar-arm arm-right"></span>
+                      </div>
+                      <span class="identity-particle p1" aria-hidden="true"></span>
+                      <span class="identity-particle p2" aria-hidden="true"></span>
+                      <span class="identity-particle p3" aria-hidden="true"></span>
+                      <span class="identity-particle p4" aria-hidden="true"></span>
+                    </div>
+                    <div class="identity-tags">
+                      <span class="pill" id="tag-base-age">年龄：26</span>
+                      <span class="pill" id="tag-base-job">职业：待填写</span>
+                      <span class="pill" id="tag-base-style">风格：待分析</span>
+                    </div>
+                  </div>
+                  <div class="card base-form-card">
+                    <div class="trait-list">
+                      <label>昵称 <input id="base-nickname" type="text" placeholder="请输入昵称（必填）" /><span></span></label>
+                      <label>年龄 <input id="base-age" type="range" min="12" max="80" value="26" /><span id="val-base-age">26</span></label>
+                      <label>性别
+                        <select id="base-gender">
+                          <option value="">不愿透露</option>
+                          <option>男性</option>
+                          <option>女性</option>
+                          <option>非二元</option>
+                        </select>
+                        <span></span>
+                      </label>
+                      <label>职业 <input id="base-job" type="text" placeholder="如：产品经理 / 开发者" /><span></span></label>
+                      <label>教育 <select id="base-edu"><option>本科</option><option>大专</option><option>硕士</option><option>博士</option><option>其他</option></select><span></span></label>
+                      <label>地理位置 <input id="base-location" type="text" placeholder="国家 / 时区（可选）" /><span></span></label>
+                    </div>
+                    <textarea id="base-intro" rows="2" placeholder="用一句话描述自己（语言风格会用于初步分析）"></textarea>
+                  </div>
+                </div>
+                <div class="input-progress-panel">
+                  <div class="input-progress-head">
+                    <span>信息输入进度</span>
+                    <span id="base-info-progress-text">0/5 完成</span>
+                  </div>
+                  <div class="step-progress"><div id="base-info-progress-fill"></div></div>
+                </div>
+              </div>
+
+              <div class="incubate-step" data-step="2">
+                <div class="grid two">
+                  <div class="card radar-panel">
+                    <h3>五维人格罗盘</h3>
+                    <p class="sub">拖动顶点或滑块，定义你的基准人格。</p>
+                    <div class="radar-wrap">
+                      <svg id="persona-radar" viewBox="0 0 320 320" aria-label="五维人格雷达图">
+                        <g id="radar-grid"></g>
+                        <polygon id="radar-value" points=""></polygon>
+                        <g id="radar-handles"></g>
+                      </svg>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h3>维度微调</h3>
+                    <div class="trait-list">
+                      <label>理性-感性 <input id="trait-rationality" type="range" min="0" max="100" value="68" /><span id="val-rationality">68</span></label>
+                      <label>稳健-冒险 <input id="trait-risk" type="range" min="0" max="100" value="44" /><span id="val-risk">44</span></label>
+                      <label>利己-利他 <input id="trait-altruism" type="range" min="0" max="100" value="55" /><span id="val-altruism">55</span></label>
+                      <label>短期-长期 <input id="trait-horizon" type="range" min="0" max="100" value="62" /><span id="val-horizon">62</span></label>
+                      <label>依赖-自主 <input id="trait-autonomy" type="range" min="0" max="100" value="58" /><span id="val-autonomy">58</span></label>
+                    </div>
+                    <div id="radar-meaning" class="suggest-card">你当前偏向理性与长期导向。</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="incubate-step" data-step="3">
+                <h3>价值观罗盘与人生原则</h3>
+                <p class="sub">拖拽排序核心价值观，并补充你的原则陈述。</p>
+                <div class="grid two">
+                  <div class="card">
+                    <h4>价值观排序</h4>
+                    <div id="value-sort-list" class="value-sort-list"></div>
+                  </div>
+                  <div class="card">
+                    <h4>原则陈述</h4>
+                    <textarea id="principle-1" rows="2" placeholder="我始终坚持..."></textarea>
+                    <textarea id="principle-2" rows="2" placeholder="当我面临冲突时，我会..."></textarea>
+                    <div class="trait-list">
+                      <label>过程正义 vs 结果正义 <input id="principle-justice" type="range" min="0" max="100" value="52" /><span id="val-principle-justice">52</span></label>
+                      <label>集体利益 vs 个人利益 <input id="principle-collective" type="range" min="0" max="100" value="48" /><span id="val-principle-collective">48</span></label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="incubate-step" data-step="4">
+                <h3>关键经历与决策锚点</h3>
+                <p class="sub">添加经历节点，构建你的长期记忆锚点。</p>
+                <div class="experience-grid" id="experience-grid"></div>
+                <div class="grid two slim" style="margin-top: 12px;">
+                  <input id="experience-note" placeholder="为当前选中的经历补充一句描述..." />
+                  <div id="selected-exp-list" class="selected-exp-list"></div>
+                </div>
+                <div class="card mini-form">
+                  <h4>新增经历</h4>
+                  <div class="grid two slim">
+                    <input id="timeline-title" placeholder="经历标题" />
+                    <input id="timeline-year" type="number" placeholder="年份" />
+                    <input id="timeline-desc" placeholder="描述（100字内）" />
+                    <select id="timeline-result"><option>成功</option><option>失败</option><option>中立</option></select>
+                  </div>
+                  <button class="btn ghost" id="btn-add-timeline" type="button">添加到时间轴</button>
+                  <div id="timeline-list" class="timeline-list"></div>
+                </div>
+              </div>
+
+              <div class="incubate-step" data-step="5">
+                <h3>决策风格测试（情境模拟）</h3>
+                <p class="sub">选择你在情境中的偏好，系统将微调Agent偏移。</p>
+                <div id="scenario-list" class="scenario-list"></div>
+              </div>
+
+              <div class="incubate-step" data-step="6">
+                <div class="grid two-left">
+                  <div class="card">
+                    <h3>Agent 宇宙孵化池</h3>
+                    <p class="sub">点击光球编辑偏移与昵称，可新增至最多 5 个 Agent。</p>
+                    <div id="incubator-pool" class="incubator-pool"></div>
+                    <div class="actions">
+                      <button id="btn-add-agent" class="btn ghost" type="button">新增 Agent</button>
+                      <button id="btn-random-agent" class="btn ghost" type="button">随机生成</button>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h3>Agent 定制面板</h3>
+                    <p class="sub">实时预览 3D 形象变化（表情/配饰）。</p>
+                    <div class="agent-preview-wrap">
+                      <div class="agent-preview-avatar" id="agent-preview-avatar">
+                        <span class="preview-fallback">3D</span>
+                      </div>
+                      <div class="agent-preview-meta">
+                        <div class="pill" id="agent-preview-style">中性风格</div>
+                        <div class="pill" id="agent-preview-accessory">配饰：标准环</div>
+                      </div>
+                    </div>
+                    <div class="trait-list">
+                      <label>Agent 名称 <input id="custom-agent-name" type="text" placeholder="输入 Agent 名称" /><span></span></label>
+                      <label>理性偏移 <input id="offset-rationality" type="range" min="-40" max="40" value="0" /><span id="val-offset-rationality">0</span></label>
+                      <label>冒险偏移 <input id="offset-risk" type="range" min="-40" max="40" value="0" /><span id="val-offset-risk">0</span></label>
+                      <label>情绪偏移 <input id="offset-emotion" type="range" min="-40" max="40" value="0" /><span id="val-offset-emotion">0</span></label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="incubator-footer">
+              <button class="btn ghost" id="btn-prev-step" type="button">上一步</button>
+              <button class="btn ghost" id="btn-skip-step" type="button">跳过</button>
+              <button class="btn" id="btn-next-step" type="button">下一步</button>
+              <button class="btn alt hidden" id="btn-complete-incubate" type="button">完成孵化</button>
+            </div>
+          </div>
+
+          <aside class="incubator-side card">
+            <h4>3D 预览区</h4>
+            <p class="sub">随着输入动态生长的人格种子</p>
+            <div id="incubator-seed-preview" class="incubator-seed-preview">
+              <div class="seed-core"></div>
+              <div class="seed-ring ring-a"></div>
+              <div class="seed-ring ring-b"></div>
+              <div class="seed-ring ring-c"></div>
+            </div>
+            <div id="incubator-seed-hint" class="suggest-card">当前阶段：基础信息构建中</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="dialog" class="section dialog-shell">
+      <div id="app-particles" class="app-particles" aria-hidden="true"></div>
+      <aside class="dialog-left glass-panel">
+        <div class="left-head">
+          <h3>Agent 边栏</h3>
+          <p class="sub">可静音、激活、排序、编辑</p>
+        </div>
+        <div id="agent-list" class="agent-sidebar-list"></div>
+        <div class="left-foot">
+          <button class="btn ghost" id="btn-new-agent">+ 新建Agent</button>
+          <button class="btn ghost" id="btn-edit-agent">编辑Agent</button>
+        </div>
+      </aside>
+
+      <div class="dialog-center glass-panel">
+        <div class="dialog-topbar">
+          <div>
+            <h3 id="dialog-title">多Agent协作会话</h3>
+            <span class="sub" id="dialog-time">--:--</span>
+          </div>
+          <div class="status-group">
+            <span class="pill" id="net-status">网络：已连接</span>
+            <button class="btn ghost" id="btn-view-matrix">查看决策矩阵</button>
+          </div>
+        </div>
+
+        <div class="dialog-stage-wrap">
+          <div id="dialog-3d-stage" class="dialog-3d-stage"></div>
+        </div>
+
+        <div class="bubbles chat-stream" id="chat-area"></div>
+
+        <div class="composer-shell">
+          <div class="quick-bar">
+            <button class="quick-btn" id="btn-mention">@指定Agent</button>
+            <button class="quick-btn" id="btn-debate">发起辩论</button>
+            <button class="quick-btn" id="btn-upload">上传文件</button>
+          </div>
+          <div class="question-bar">
+            <textarea id="user-input" rows="1" placeholder="输入问题，Enter发送，Shift+Enter换行"></textarea>
+            <button class="btn" id="btn-send">发送</button>
+          </div>
+        </div>
+      </div>
+
+      <aside id="insight-panel" class="dialog-right collapsed glass-panel">
+        <button class="right-handle" id="btn-toggle-insight" title="展开决策速览">📊 决策速览</button>
+        <div class="right-content">
+          <h4>实时观点聚类</h4>
+          <div id="cluster-list" class="cluster-list"></div>
+          <h4>快速风险评分</h4>
+          <div id="mini-heatmap" class="mini-heatmap"></div>
+          <h4>建议下一步</h4>
+          <div id="next-suggestion" class="suggest-card">让理性Agent与冒险Agent辩论一次。</div>
+        </div>
+      </aside>
+    </section>
+
+    <section id="matrix" class="section decision-shell">
+      <div class="decision-topbar glass-panel">
+        <button class="btn ghost" id="btn-back-dialog">← 返回对话</button>
+        <h3>决策分析报告</h3>
+        <div class="actions">
+          <button class="btn ghost" id="btn-refresh-report">🔄 刷新</button>
+          <button class="btn" id="btn-export-report">📥 导出</button>
+        </div>
+      </div>
+
+      <div class="decision-grid">
+        <div class="card decision-col">
+          <h4>观点聚类</h4>
+          <div class="cluster-block consensus">
+            <div class="cluster-title">共识点 (2)</div>
+            <div class="cluster-item" draggable="true">先确保现金流安全，再试点。</div>
+            <div class="cluster-item" draggable="true">低成本验证市场比一次性重投更稳。</div>
+          </div>
+          <div class="cluster-block divergence">
+            <div class="cluster-title">分歧点 (2)</div>
+            <div class="cluster-item" draggable="true">是否立刻扩大投放规模。</div>
+            <div class="cluster-item" draggable="true">品牌投入优先级是否高于产品迭代。</div>
+          </div>
+        </div>
+
+        <div class="card decision-col">
+          <div class="heat-head">
+            <h4>风险热力图</h4>
+            <select id="risk-view-mode">
+              <option value="avg">平均风险</option>
+              <option value="divergence">分歧风险</option>
+            </select>
+          </div>
+          <div id="risk-matrix-grid" class="risk-matrix-grid"></div>
+          <div class="weight-controls">
+            <label>财务权重 <input type="range" id="w-finance" min="0" max="100" value="40" /></label>
+            <label>情感权重 <input type="range" id="w-emotion" min="0" max="100" value="25" /></label>
+            <label>时间权重 <input type="range" id="w-time" min="0" max="100" value="35" /></label>
+          </div>
+          <div id="risk-detail" class="risk-detail">点击热力格查看评分详情。</div>
+        </div>
+
+        <div class="card decision-col">
+          <div class="tree-head">
+            <h4>决策路径树</h4>
+            <button class="btn ghost" id="btn-auto-layout">自动布局</button>
+          </div>
+          <div id="decision-tree" class="decision-tree"></div>
+          <button class="btn ghost" id="btn-export-tree">导出PNG</button>
+        </div>
+      </div>
+
+      <div class="decision-bottom-bar glass-panel">
+        <button class="btn alt" id="btn-generate-report">生成报告</button>
+        <button class="btn ghost" id="btn-continue-chat">返回对话继续讨论</button>
+      </div>
+    </section>
+
+    <div id="report-modal" class="report-modal hidden">
+      <div class="report-modal-body glass-panel">
+        <h3>报告预览</h3>
+        <p class="sub">包含聚类、热力图、路径树与用户注释。</p>
+        <textarea id="report-title" rows="1">多Agent决策分析报告</textarea>
+        <div class="report-actions">
+          <button class="btn" id="btn-download-pdf">下载PDF</button>
+          <button class="btn ghost" id="btn-share-report">分享链接</button>
+          <button class="btn ghost" id="btn-copy-report">复制内容</button>
+          <button class="btn ghost" id="btn-close-report">关闭</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="section app-shell hidden">
+    <p class="muted">Persona Switch · 基于人格的多 Agent 决策辅助 · 蓝紫科技感原型</p>
+  </footer>
+
+  <script type="module" src="./three-preview.js"></script>
+  <script type="module" src="./dialog-visuals.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

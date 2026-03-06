@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>原理·故事 | Persona Switch</title>
+  <link rel="stylesheet" href="./principle.css" />
+</head>
+<body>
+  <canvas id="bg-particles" aria-hidden="true"></canvas>
+
+  <header class="topbar glass">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <div>
+      <h1>原理·故事</h1>
+      <p>三分钟读懂 Persona Switch</p>
+    </div>
+    <button id="btn-share" class="ghost-btn" type="button">分享</button>
+  </header>
+
+  <main class="container">
+    <section class="hero glass reveal">
+      <div>
+        <span class="chip">核心原理可视化</span>
+        <h2>从人格种子，到多 Agent 宇宙</h2>
+        <p>Persona Switch 通过同源异相的人格衍生机制，让你同时与多个“自己”协作思考，获得更完整的决策视角。</p>
+      </div>
+      <div class="seed-3d" title="人格种子">
+        <span class="core"></span>
+        <span class="ring ring-a"></span>
+        <span class="ring ring-b"></span>
+        <span class="ring ring-c"></span>
+      </div>
+    </section>
+
+    <section class="chapter row-unified glass reveal" id="chapter-1">
+      <div class="chapter-inner">
+        <article class="text">
+          <h3>同源异相 · 你的思想多棱镜</h3>
+          <p>所有Agent都源于你的人格内核，但在特定维度上有所偏移——比你更理性的你、更冒险的你、更情绪化的你。他们与你同源，因此建议不会失真，却能提供新的观察角度。</p>
+          <div class="tags">
+            <span>#人格衍生</span>
+            <span>#个性化偏移</span>
+            <span>#自我一致性</span>
+          </div>
+        </article>
+        <div class="viz viz-homology" title="同源异相">
+        <div class="orbit o1"></div>
+        <div class="orbit o2"></div>
+        <div class="planet p-main"></div>
+        <div class="planet p1"></div>
+        <div class="planet p2"></div>
+        <div class="planet p3"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter row-unified glass reveal reverse" id="chapter-2">
+      <div class="chapter-inner">
+        <article class="text">
+          <h3>思想内窥镜 · 看见潜意识的自己</h3>
+          <p>通过与Agent的对话和辩论，你会发现自己未曾意识到的矛盾与偏好。每个Agent都是一面镜子，帮助你识别情绪、风险和价值观在决策中的真实权重。</p>
+          <div class="tags">
+            <span>#自我认知</span>
+            <span>#矛盾发现</span>
+            <span>#潜意识外化</span>
+          </div>
+        </article>
+        <div class="viz viz-mirror" title="思想内窥镜">
+        <div class="brain-shell"></div>
+        <div class="pulse-dot d1"></div>
+        <div class="pulse-dot d2"></div>
+        <div class="pulse-dot d3"></div>
+        <div class="projection"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter row-unified glass reveal" id="chapter-3">
+      <div class="chapter-inner">
+        <article class="text">
+          <h3>共生协作网络 · 你的私人董事会</h3>
+          <p>Agent们不是孤立存在的，它们在同一问题下共同思考、彼此辩论、互相校验。你作为最终决策者，获得的是多视角碰撞后的“决策全景图”。</p>
+          <div class="tags">
+            <span>#多智能体协作</span>
+            <span>#观点碰撞</span>
+            <span>#集体智慧</span>
+          </div>
+        </article>
+        <div class="viz viz-network" title="共生协作网络">
+        <div class="hub"></div>
+        <div class="node n1"></div>
+        <div class="node n2"></div>
+        <div class="node n3"></div>
+        <div class="node n4"></div>
+        <div class="link l1"></div>
+        <div class="link l2"></div>
+        <div class="link l3"></div>
+        <div class="link l4"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter row-unified glass reveal reverse" id="chapter-4">
+      <div class="chapter-inner">
+        <article class="text">
+          <h3>六步孵化 · 从种子到宇宙</h3>
+          <p>通过六个维度的信息输入，系统深度建模你的人格内核，自动生成3-5个个性化Agent。整个过程约5-8分钟，却会形成可持续进化的决策辅助体系。</p>
+          <div class="tags steps">
+            <button class="step-tag" data-step="1" type="button">①基础信息</button>
+            <button class="step-tag" data-step="2" type="button">②人格罗盘</button>
+            <button class="step-tag" data-step="3" type="button">③价值观排序</button>
+            <button class="step-tag" data-step="4" type="button">④关键经历</button>
+            <button class="step-tag" data-step="5" type="button">⑤情境测试</button>
+            <button class="step-tag" data-step="6" type="button">⑥Agent定制</button>
+          </div>
+        </article>
+        <div class="viz viz-timeline" title="六步孵化流程">
+        <div class="line"></div>
+        <div class="stage s1">①</div>
+        <div class="stage s2">②</div>
+        <div class="stage s3">③</div>
+        <div class="stage s4">④</div>
+        <div class="stage s5">⑤</div>
+        <div class="stage s6">⑥</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <button id="btn-start-incubate" class="cta-fixed" type="button">开始孵化你的Agent宇宙</button>
+
+  <dialog id="step-dialog" class="step-dialog">
+    <h4 id="step-dialog-title">步骤说明</h4>
+    <p id="step-dialog-content"></p>
+    <button class="ghost-btn" id="btn-close-step" type="button">关闭</button>
+  </dialog>
+
+  <script src="./principle.js"></script>
+</body>
+</html>
