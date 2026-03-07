@@ -10,6 +10,8 @@ let agents = [...DEFAULT_AGENTS];
 
 const STORAGE_USERS = "persona_switch_users";
 const STORAGE_SESSION = "persona_switch_session";
+const DEEPSEEK_PROXY_ENDPOINT = "/api/chat";
+const DEEPSEEK_MODEL = "deepseek-chat";
 const TRAIT_KEYS = ["rationality", "risk", "altruism", "horizon", "autonomy"];
 const TRAIT_LABELS = {
   rationality: "理性",
@@ -81,11 +83,20 @@ const incubatorState = {
 
 const dialogState = {
   selectedAgent: null,
+  mentionTarget: "",
   mutedAgents: {},
   thinkingAgents: {},
   messageSeed: 0,
   panelExpanded: false,
-  panelPinned: false
+  panelPinned: false,
+  history: [],
+  isGenerating: false
+};
+
+const decisionState = {
+  topic: "",
+  options: ["方案A", "方案B", "方案C"],
+  analysis: null
 };
 
 const PERSONA_LIBRARY = {
@@ -272,6 +283,7 @@ function pushDialogAgentVisuals() {
     return {
       index: idx,
       name: a.name,
+      enabled: !dialogState.mutedAgents[a.name],
       personaId: persona.id,
       color: persona.c2,
       accent: persona.ring,
@@ -471,8 +483,12 @@ function googleQuickLogin() {
 function renderAgents(targetId) {
   const el = document.getElementById(targetId);
   if (!el) return;
+  if (dialogState.mentionTarget && dialogState.mutedAgents[dialogState.mentionTarget]) {
+    dialogState.mentionTarget = "";
+  }
   el.innerHTML = agents.map((a, idx) => {
     const isMuted = !!dialogState.mutedAgents[a.name];
+    const isEnabled = !isMuted;
     const isActive = dialogState.selectedAgent === a.name;
     const persona = resolvePersona(a);
     const ringColor = persona.ring;
@@ -483,16 +499,19 @@ function renderAgents(targetId) {
         </div>
         <div class="agent-meta">
           <div class="name">${a.name}</div>
-          <div class="mood">${persona.moodLabel}${dialogState.thinkingAgents[a.name] ? " · 思考中..." : ""}</div>
+          <div class="mood">${isEnabled ? persona.moodLabel : "已关闭 · 不参与回答"}${dialogState.thinkingAgents[a.name] ? " · 思考中..." : ""}</div>
         </div>
-        <button class="agent-toggle" data-toggle="${a.name}" title="静音切换">${isMuted ? "M" : "ON"}</button>
+        <button class="agent-switch ${isEnabled ? "on" : "off"}" data-toggle="${a.name}" title="启用切换" aria-pressed="${isEnabled ? "true" : "false"}" type="button">
+          <span class="agent-switch-track"></span>
+          <span class="agent-switch-thumb"></span>
+        </button>
       </article>
     `;
   }).join("");
 
   el.querySelectorAll(".agent-side-card").forEach(card => {
     card.addEventListener("click", evt => {
-      if (evt.target.closest(".agent-toggle")) return;
+      if (evt.target.closest(".agent-switch")) return;
       const name = card.dataset.agent || "Agent";
       dialogState.selectedAgent = name;
       highlightAgent(name);
@@ -500,7 +519,7 @@ function renderAgents(targetId) {
       focusLatestMessageByAgent(name);
     });
   });
-  el.querySelectorAll(".agent-toggle").forEach(btn => {
+  el.querySelectorAll(".agent-switch").forEach(btn => {
     btn.addEventListener("click", evt => {
       evt.stopPropagation();
       const name = btn.dataset.toggle;
@@ -509,10 +528,13 @@ function renderAgents(targetId) {
     });
   });
   pushDialogAgentVisuals();
+  renderMentionPicker();
 }
 
 function highlightAgent(name) {
-  window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { index: Math.max(0, agents.findIndex(a => a.name === name)) } }));
+  window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", {
+    detail: { index: Math.max(0, agents.findIndex(a => a.name === name)), name }
+  }));
   const chat = document.getElementById("chat-area");
   const theme = getAgentTheme(name);
   if (!chat) return;
@@ -529,6 +551,93 @@ function emotionFromInput(text) {
   if (/(焦虑|担心|害怕|风险)/.test(text)) return "anxious";
   if (/(兴奋|激动|机会|冲)/.test(text)) return "excited";
   return "calm";
+}
+
+function updateNetStatus(text, tone = "normal") {
+  const node = document.getElementById("net-status");
+  if (!node) return;
+  node.textContent = text;
+  node.style.color = tone === "error" ? "#ff9db2" : tone === "ok" ? "#9ef4cc" : "";
+}
+
+function syncDeepSeekStatus() {
+  updateNetStatus("模型：后端代理模式", "ok");
+}
+
+function recordDialogMessage({ sender = "agent", agentName = "", content = "" }) {
+  const text = String(content || "").trim();
+  if (!text) return;
+  dialogState.history.push({
+    sender,
+    agentName: sender === "agent" ? agentName : "",
+    content: text,
+    ts: Date.now()
+  });
+  if (dialogState.history.length > 36) {
+    dialogState.history = dialogState.history.slice(-36);
+  }
+}
+
+function getRecentDialogMessages(limit = 14) {
+  return dialogState.history.slice(-limit);
+}
+
+function buildAgentSystemPrompt(agent) {
+  const persona = resolvePersona(agent);
+  return [
+    "你是 Persona Switch 的多Agent成员之一，请使用中文简体回复。",
+    `你的身份：${agent.name}，人格风格：${persona.moodLabel}。`,
+    "任务：针对用户问题给出可执行建议、风险提示和下一步动作。",
+    "要求：",
+    "1) 回复结构清晰，先结论后理由；",
+    "2) 尽量给出 2-4 条要点；",
+    "3) 与其他Agent保持差异化视角，不重复空话；",
+    "4) 内容要具体，避免泛泛而谈。"
+  ].join("\n");
+}
+
+async function callDeepSeekChat(agent, userPrompt, opts = {}) {
+  const history = getRecentDialogMessages(14);
+  const messages = [
+    { role: "system", content: buildAgentSystemPrompt(agent) },
+    ...history.map(item => {
+      if (item.sender === "user") return { role: "user", content: item.content };
+      return { role: "assistant", content: `[${item.agentName || "Agent"}] ${item.content}` };
+    })
+  ];
+
+  if (!messages.length || messages[messages.length - 1]?.role !== "user") {
+    messages.push({ role: "user", content: userPrompt });
+  }
+  if (opts.extraUserPrompt) {
+    messages.push({ role: "user", content: opts.extraUserPrompt });
+  }
+
+  const resp = await fetch(DEEPSEEK_PROXY_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      temperature: typeof opts.temperature === "number" ? opts.temperature : 0.8,
+      max_tokens: 500,
+      stream: false,
+      messages
+    })
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`代理请求失败(${resp.status}) ${errText.slice(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  const text = String(data?.content || data?.choices?.[0]?.message?.content || "").trim();
+  if (!text) {
+    throw new Error("DeepSeek返回为空");
+  }
+  return text;
 }
 
 function appendMessage({ sender = "agent", agentName = "", content = "", theme = "theme-rational", typing = false }) {
@@ -590,72 +699,300 @@ function focusLatestMessageByAgent(name) {
   setTimeout(() => { target.style.outline = ""; }, 1200);
 }
 
-function mockDebate() {
-  const candidates = agents.filter(a => !dialogState.mutedAgents[a.name]).slice(0, 3);
-  if (!candidates.length) return;
-  candidates.forEach((agent, idx) => {
-    setTimeout(() => {
-      dialogState.thinkingAgents[agent.name] = true;
-      renderAgents("agent-list");
-      setTimeout(async () => {
-        dialogState.thinkingAgents[agent.name] = false;
-        renderAgents("agent-list");
-        window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { index: idx } }));
-        const node = appendMessage({
-          sender: "agent",
-          agentName: agent.name,
-          content: "",
-          theme: getAgentTheme(agent.name),
-          typing: true
-        });
-        await streamText(node, `${agent.name}：@其他Agent 我不同意，当前阶段应优先${idx === 0 ? "验证数据" : idx === 1 ? "抢占窗口期" : "控制用户情绪风险"}。`, 16);
-      }, 450);
-    }, idx * 320);
-  });
+function getUnmutedAgents() {
+  return agents.filter(a => !dialogState.mutedAgents[a.name]);
 }
 
-async function parallelAgentReply(prompt) {
-  const activeAgents = agents.filter(a => !dialogState.mutedAgents[a.name]);
-  for (let i = 0; i < activeAgents.length; i += 1) {
-    const agent = activeAgents[i];
-    dialogState.thinkingAgents[agent.name] = true;
-  }
-  renderAgents("agent-list");
+function normalizeAgentName(name = "") {
+  return String(name || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
 
-  for (let i = 0; i < activeAgents.length; i += 1) {
-    const agent = activeAgents[i];
-    await new Promise(r => setTimeout(r, 260));
-    dialogState.thinkingAgents[agent.name] = false;
-    renderAgents("agent-list");
-    window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { index: i } }));
-    const node = appendMessage({
-      sender: "agent",
-      agentName: agent.name,
-      content: "",
-      theme: getAgentTheme(agent.name),
-      typing: true
-    });
-    await streamText(node, `${agent.name}：基于你的问题「${prompt.slice(0, 18)}${prompt.length > 18 ? "..." : ""}」，我建议先做小范围验证，再决定资源分配。`, 14);
+function findAgentByName(name = "") {
+  const key = normalizeAgentName(name);
+  if (!key) return null;
+  return agents.find(a => normalizeAgentName(a.name) === key) || null;
+}
+
+function parseMentionTarget(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text.startsWith("@")) return { mentioned: false, targetName: "", cleanText: text };
+
+  const rest = text.slice(1).trimStart();
+  const sortedAgents = [...agents].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+  const byPrefix = sortedAgents.find(a => rest.startsWith(a.name));
+  if (byPrefix) {
+    const tail = rest.slice(byPrefix.name.length).replace(/^[\s:：，,。.!！？?]+/, "").trim();
+    return {
+      mentioned: true,
+      targetName: byPrefix.name,
+      cleanText: tail || "请基于当前上下文继续给出建议。"
+    };
   }
-  updateInsightPanel();
+
+  const tokenMatch = rest.match(/^([^\s:：，,。.!！？?]+)/);
+  const token = tokenMatch?.[1] || "";
+  if (!token) return { mentioned: false, targetName: "", cleanText: text };
+  const target = findAgentByName(token);
+  if (target) {
+    const tail = rest.slice(token.length).replace(/^[\s:：，,。.!！？?]+/, "").trim();
+    return {
+      mentioned: true,
+      targetName: target.name,
+      cleanText: tail || "请基于当前上下文继续给出建议。"
+    };
+  }
+  return {
+    mentioned: true,
+    targetName: token,
+    cleanText: rest.slice(token.length).replace(/^[\s:：，,。.!！？?]+/, "").trim() || "请基于当前上下文继续给出建议。"
+  };
+}
+
+function pickMentionAgentName() {
+  if (dialogState.mentionTarget) return dialogState.mentionTarget;
+  if (dialogState.selectedAgent) return dialogState.selectedAgent;
+  const first = getUnmutedAgents()[0];
+  return first?.name || (agents[0]?.name || "理性+");
+}
+
+function upsertInputMention(input, targetName) {
+  const rest = String(input.value || "").replace(/^@[^\s:：，,。.!！？?]+[\s:：，,。.!！？?]*/, "").trim();
+  input.value = `@${targetName} ${rest}`.trim();
+}
+
+function closeMentionPicker() {
+  document.getElementById("mention-picker")?.classList.add("hidden");
+}
+
+function syncMentionButtonLabel() {
+  const mentionBtn = document.getElementById("btn-mention");
+  if (!mentionBtn) return;
+  if (dialogState.mentionTarget) {
+    mentionBtn.textContent = `@${dialogState.mentionTarget}`;
+    mentionBtn.classList.add("active");
+  } else {
+    mentionBtn.textContent = "@指定Agent";
+    mentionBtn.classList.remove("active");
+  }
+}
+
+function renderMentionPicker() {
+  const list = document.getElementById("mention-picker-list");
+  if (!list) return;
+  const available = getUnmutedAgents();
+  if (dialogState.mentionTarget && !available.some(a => a.name === dialogState.mentionTarget)) {
+    dialogState.mentionTarget = "";
+  }
+  const current = pickMentionAgentName();
+  if (!available.length) {
+    list.innerHTML = `<div class="mention-empty">当前没有可用 Agent（可能已全部静音）。</div>`;
+    syncMentionButtonLabel();
+    return;
+  }
+  list.innerHTML = available.map(agent => `
+    <button class="mention-item ${agent.name === current ? "active" : ""}" data-mention-agent="${agent.name}" type="button">
+      ${agent.name}
+    </button>
+  `).join("");
+  syncMentionButtonLabel();
+}
+
+function toggleMentionPicker(forceOpen = null) {
+  const panel = document.getElementById("mention-picker");
+  if (!panel) return;
+  const opening = typeof forceOpen === "boolean" ? forceOpen : panel.classList.contains("hidden");
+  if (!opening) {
+    closeMentionPicker();
+    return;
+  }
+  renderMentionPicker();
+  panel.classList.remove("hidden");
+}
+
+function insertMentionToInput(targetName = "") {
+  const input = document.getElementById("user-input");
+  if (!input) return;
+  const target = targetName || pickMentionAgentName();
+  dialogState.mentionTarget = target;
+  upsertInputMention(input, target);
+  syncMentionButtonLabel();
+  closeMentionPicker();
+  input.focus();
+  autoGrowTextarea(input);
+}
+
+async function mockDebate() {
+  if (dialogState.isGenerating) return;
+  const candidates = getUnmutedAgents().slice(0, 3);
+  if (!candidates.length) return;
+  const topic = [...dialogState.history].reverse().find(item => item.sender === "user")?.content || "当前决策方向";
+  const sendBtn = document.getElementById("btn-send");
+  const debateBtn = document.getElementById("btn-debate");
+  if (sendBtn) sendBtn.disabled = true;
+  if (debateBtn) debateBtn.disabled = true;
+  dialogState.isGenerating = true;
+  updateNetStatus("模型：辩论生成中...", "normal");
+  try {
+    for (let idx = 0; idx < candidates.length; idx += 1) {
+      const agent = candidates[idx];
+      dialogState.thinkingAgents[agent.name] = true;
+      renderAgents("agent-list");
+      window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { index: idx, name: agent.name } }));
+
+      const node = appendMessage({
+        sender: "agent",
+        agentName: agent.name,
+        content: "",
+        theme: getAgentTheme(agent.name),
+        typing: true
+      });
+
+      let result = "";
+      try {
+        result = await callDeepSeekChat(agent, topic, {
+          temperature: 1.0,
+          extraUserPrompt: `请发起辩论：围绕议题「${topic}」，先表达你的立场，再指出一个你不同意的潜在观点，并给出你主张的下一步。控制在120字内。`
+        });
+        updateNetStatus("模型：DeepSeek 已连接", "ok");
+      } catch (err) {
+        result = "我建议先验证关键假设，再决定是否扩大投入。";
+        updateNetStatus("模型：请求失败，已回退", "error");
+        console.error(err);
+      }
+
+      dialogState.thinkingAgents[agent.name] = false;
+      renderAgents("agent-list");
+      await streamText(node, `${agent.name}：${result}`, 10);
+      recordDialogMessage({ sender: "agent", agentName: agent.name, content: result });
+    }
+    updateInsightPanel();
+  } finally {
+    dialogState.isGenerating = false;
+    dialogState.thinkingAgents = {};
+    renderAgents("agent-list");
+    if (sendBtn) sendBtn.disabled = false;
+    if (debateBtn) debateBtn.disabled = false;
+    if (decisionState.topic || document.getElementById("decision-topic")?.value.trim()) {
+      refreshDecisionAnalysis();
+    }
+  }
+}
+
+async function parallelAgentReply(prompt, options = {}) {
+  if (dialogState.isGenerating) return;
+  const targets = Array.isArray(options.targetAgents) && options.targetAgents.length
+    ? options.targetAgents
+    : getUnmutedAgents();
+  const activeAgents = targets;
+  if (!activeAgents.length) return;
+  const sendBtn = document.getElementById("btn-send");
+  const debateBtn = document.getElementById("btn-debate");
+  dialogState.isGenerating = true;
+  if (sendBtn) sendBtn.disabled = true;
+  if (debateBtn) debateBtn.disabled = true;
+  updateNetStatus("模型：生成中...", "normal");
+  try {
+    for (let i = 0; i < activeAgents.length; i += 1) {
+      const agent = activeAgents[i];
+      dialogState.thinkingAgents[agent.name] = true;
+    }
+    renderAgents("agent-list");
+
+    for (let i = 0; i < activeAgents.length; i += 1) {
+      const agent = activeAgents[i];
+      await new Promise(r => setTimeout(r, 120));
+      let result = "";
+      try {
+        result = await callDeepSeekChat(agent, prompt);
+        updateNetStatus("模型：DeepSeek 已连接", "ok");
+      } catch (err) {
+        result = `基于你的问题「${prompt.slice(0, 18)}${prompt.length > 18 ? "..." : ""}」，我建议先做小范围验证，再决定资源分配。`;
+        updateNetStatus("模型：请求失败，已回退", "error");
+        console.error(err);
+      }
+
+      dialogState.thinkingAgents[agent.name] = false;
+      renderAgents("agent-list");
+      window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { index: i, name: agent.name } }));
+      const node = appendMessage({
+        sender: "agent",
+        agentName: agent.name,
+        content: "",
+        theme: getAgentTheme(agent.name),
+        typing: true
+      });
+      await streamText(node, `${agent.name}：${result}`, 10);
+      recordDialogMessage({ sender: "agent", agentName: agent.name, content: result });
+    }
+    updateInsightPanel();
+  } finally {
+    dialogState.isGenerating = false;
+    dialogState.thinkingAgents = {};
+    renderAgents("agent-list");
+    if (sendBtn) sendBtn.disabled = false;
+    if (debateBtn) debateBtn.disabled = false;
+    if (decisionState.topic || document.getElementById("decision-topic")?.value.trim()) {
+      refreshDecisionAnalysis();
+    }
+  }
 }
 
 function mockSendFlow(text) {
+  const { mentioned, targetName, cleanText } = parseMentionTarget(text);
   appendMessage({ sender: "user", content: text });
-  parallelAgentReply(text);
+  recordDialogMessage({ sender: "user", content: text });
+  if (!decisionState.topic) {
+    decisionState.topic = cleanText || text;
+    hydrateDecisionSetup();
+  }
+
+  let targetAgent = null;
+  if (mentioned) {
+    targetAgent = findAgentByName(targetName);
+  } else if (dialogState.mentionTarget) {
+    targetAgent = findAgentByName(dialogState.mentionTarget);
+  }
+
+  if (targetAgent && dialogState.mutedAgents[targetAgent.name]) {
+    targetAgent = null;
+  }
+
+  if (!targetAgent && mentioned) {
+    appendMessage({
+      sender: "agent",
+      agentName: "系统",
+      content: `未找到可用 Agent「${targetName}」，请检查名称或取消静音后重试。`,
+      theme: "theme-rational"
+    });
+    dialogState.mentionTarget = "";
+    const mentionBtn = document.getElementById("btn-mention");
+    if (mentionBtn) mentionBtn.textContent = "@指定Agent";
+    return;
+  }
+
+  if (targetAgent) {
+    dialogState.selectedAgent = targetAgent.name;
+    dialogState.mentionTarget = targetAgent.name;
+    renderAgents("agent-list");
+    parallelAgentReply(cleanText, { targetAgents: [targetAgent] });
+    return;
+  }
+
+  parallelAgentReply(cleanText);
 }
 
 function mockSpeak() {
   const input = document.getElementById("user-input");
-  const sendBtn = document.getElementById("btn-send");
   const val = input?.value.trim();
   if (!val) return;
+  if (dialogState.isGenerating) return;
   window.dispatchEvent(new CustomEvent("dialogEmotionShift", { detail: { mood: emotionFromInput(val) } }));
-  if (sendBtn) sendBtn.disabled = true;
   mockSendFlow(val);
   input.value = "";
   autoGrowTextarea(input);
-  setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 1600);
 }
 
 function autoGrowTextarea(node) {
@@ -679,6 +1016,56 @@ function updateStepChips() {
   });
 }
 
+function getSeedStepProgress(step) {
+  if (step === 1) {
+    const fields = [
+      incubatorState.profile.nickname,
+      incubatorState.profile.age,
+      incubatorState.profile.gender,
+      incubatorState.profile.job,
+      incubatorState.profile.edu,
+      incubatorState.profile.location,
+      incubatorState.profile.intro
+    ];
+    const filled = fields.filter(v => String(v ?? "").trim() !== "").length;
+    return Math.min(1, filled / fields.length);
+  }
+  if (step === 2) {
+    const values = TRAIT_KEYS.map(key => Number(incubatorState.traits[key] || 0));
+    const avg = values.reduce((sum, n) => sum + n, 0) / Math.max(1, values.length);
+    return Math.max(0, Math.min(1, avg / 100));
+  }
+  if (step === 3) {
+    const p1 = Math.min(1, String(incubatorState.principles.p1 || "").trim().length / 30);
+    const p2 = Math.min(1, String(incubatorState.principles.p2 || "").trim().length / 30);
+    const slider = ((Number(incubatorState.principles.justice || 50) + Number(incubatorState.principles.collective || 50)) / 2) / 100;
+    return Math.max(0, Math.min(1, p1 * 0.35 + p2 * 0.35 + slider * 0.3));
+  }
+  if (step === 4) {
+    const selected = incubatorState.experiences.filter(item => item.selected).length;
+    const timeline = incubatorState.timeline.length;
+    return Math.max(0, Math.min(1, (selected / 5) * 0.7 + (Math.min(5, timeline) / 5) * 0.3));
+  }
+  if (step === 5) {
+    const done = incubatorState.scenarios.filter(item => item.answer).length;
+    const reasons = incubatorState.scenarios.filter(item => String(item.reason || "").trim().length >= 6).length;
+    return Math.max(0, Math.min(1, (done / incubatorState.scenarios.length) * 0.75 + (reasons / incubatorState.scenarios.length) * 0.25));
+  }
+  if (step === 6) {
+    const count = Math.min(5, incubatorState.customAgents.length) / 5;
+    const selected = getSelectedCustomAgent();
+    const energy = selected
+      ? Math.min(1, (
+        Math.abs(Number(selected.offsets.rationality || 0)) +
+        Math.abs(Number(selected.offsets.risk || 0)) +
+        Math.abs(Number(selected.offsets.emotion || 0))
+      ) / 90)
+      : 0;
+    return Math.max(0, Math.min(1, count * 0.65 + energy * 0.35));
+  }
+  return 0;
+}
+
 function updateSeedPreview() {
   const seed = document.getElementById("incubator-seed-preview");
   const hint = document.getElementById("incubator-seed-hint");
@@ -691,8 +1078,22 @@ function updateSeedPreview() {
     5: "当前阶段：情境偏好测试中",
     6: "当前阶段：Agent宇宙孵化中"
   };
-  seed.style.filter = `drop-shadow(0 0 ${12 + incubatorState.currentStep * 3}px rgba(111,124,255,0.38))`;
-  hint.textContent = map[incubatorState.currentStep];
+  const step = incubatorState.currentStep;
+  const progress = getSeedStepProgress(step);
+  const glow = Math.round(12 + step * 2 + progress * 9);
+  const scale = (0.92 + step * 0.04 + progress * 0.08).toFixed(3);
+  const ringOpacity = (0.28 + progress * 0.45).toFixed(3);
+  const pulseSpeed = (2.6 - progress * 0.9).toFixed(3);
+
+  seed.classList.remove("phase-1", "phase-2", "phase-3", "phase-4", "phase-5", "phase-6");
+  seed.classList.add(`phase-${step}`);
+  seed.style.setProperty("--seed-progress", progress.toFixed(3));
+  seed.style.setProperty("--seed-scale", scale);
+  seed.style.setProperty("--seed-ring-opacity", ringOpacity);
+  seed.style.setProperty("--seed-glow-size", `${glow}px`);
+  seed.style.setProperty("--seed-pulse-speed", `${pulseSpeed}s`);
+  seed.style.filter = `drop-shadow(0 0 ${glow}px rgba(111,124,255,0.4))`;
+  hint.textContent = `${map[step]} · 演化进度 ${Math.round(progress * 100)}%`;
 }
 
 function setIncubatorStep(step) {
@@ -768,6 +1169,66 @@ function buildBaseAgents() {
       offsets: { rationality: 4, risk: 22, emotion: 8 }
     }
   ];
+}
+
+function getIncubatorArchetype(agent) {
+  const r = Number(agent?.offsets?.rationality || 0);
+  const k = Number(agent?.offsets?.risk || 0);
+  const e = Number(agent?.offsets?.emotion || 0);
+
+  if (k <= -12) {
+    return {
+      id: "guardian",
+      label: "谨慎偏移",
+      icon: "🛡️",
+      colorA: "#8b7dff",
+      colorB: "#384a96",
+      styleText: "稳健守护",
+      accessoryText: "配饰：护盾环"
+    };
+  }
+  if (k >= 12 && k >= r && k >= e) {
+    return {
+      id: "adventure",
+      label: "冒险偏移",
+      icon: "⚡",
+      colorA: "#ffb482",
+      colorB: "#ff6b7f",
+      styleText: "冒险执行",
+      accessoryText: "配饰：能量棱环"
+    };
+  }
+  if (e >= 12 && e >= r) {
+    return {
+      id: "empath",
+      label: "感性偏移",
+      icon: "💗",
+      colorA: "#8de9ff",
+      colorB: "#8c74ff",
+      styleText: "情绪共鸣",
+      accessoryText: "配饰：波纹光晕"
+    };
+  }
+  if (r >= 12) {
+    return {
+      id: "rational",
+      label: "理性偏移",
+      icon: "🧠",
+      colorA: "#85a5ff",
+      colorB: "#546dff",
+      styleText: "冷静理性",
+      accessoryText: "配饰：几何镜片"
+    };
+  }
+  return {
+    id: "balanced",
+    label: "平衡偏移",
+    icon: "✨",
+    colorA: "#92c1ff",
+    colorB: "#7e8bff",
+    styleText: "中性风格",
+    accessoryText: "配饰：标准环"
+  };
 }
 
 function hydrateIncubatorFromUser(user) {
@@ -974,6 +1435,7 @@ function bindRadarDrag() {
     syncTraitsFromRadarPoints();
     syncTraitInputs();
     renderRadar();
+    updateSeedPreview();
   });
 
   window.addEventListener("mouseup", () => {
@@ -982,6 +1444,7 @@ function bindRadarDrag() {
       syncTraitsFromRadarPoints();
       syncTraitInputs();
       renderRadar();
+      updateSeedPreview();
     }
     draggingKey = null;
   });
@@ -1034,6 +1497,7 @@ function bindTraitInputs() {
       incubatorState.radarPoints[key] = toCanonicalPoint(key, incubatorState.traits[key]);
       document.getElementById(`val-${key}`).textContent = String(evt.target.value);
       renderRadar();
+      updateSeedPreview();
     });
   });
 }
@@ -1050,6 +1514,7 @@ function bindExperienceActions() {
     if (noteInput) noteInput.value = exp.selected ? exp.note : "";
     renderExperienceCards();
     renderExperienceSummary();
+    updateSeedPreview();
   });
 
   document.getElementById("experience-note")?.addEventListener("input", evt => {
@@ -1058,6 +1523,7 @@ function bindExperienceActions() {
     if (!exp || !exp.selected) return;
     exp.note = String(evt.target.value || "");
     renderExperienceSummary();
+    updateSeedPreview();
   });
 }
 
@@ -1100,6 +1566,7 @@ function bindBaseProfileActions() {
   nick?.addEventListener("input", e => {
     incubatorState.profile.nickname = e.target.value.trim();
     refreshBaseTagsAndProgress();
+    updateSeedPreview();
   });
   age?.addEventListener("input", e => {
     incubatorState.profile.age = Number(e.target.value);
@@ -1110,12 +1577,14 @@ function bindBaseProfileActions() {
   intro?.addEventListener("input", e => {
     incubatorState.profile.intro = e.target.value;
     refreshBaseTagsAndProgress();
+    updateSeedPreview();
   });
-  gender?.addEventListener("change", e => { incubatorState.profile.gender = e.target.value; refreshBaseTagsAndProgress(); });
-  job?.addEventListener("input", e => { incubatorState.profile.job = e.target.value; refreshBaseTagsAndProgress(); });
-  edu?.addEventListener("change", e => { incubatorState.profile.edu = e.target.value; refreshBaseTagsAndProgress(); });
-  location?.addEventListener("input", e => { incubatorState.profile.location = e.target.value; });
+  gender?.addEventListener("change", e => { incubatorState.profile.gender = e.target.value; refreshBaseTagsAndProgress(); updateSeedPreview(); });
+  job?.addEventListener("input", e => { incubatorState.profile.job = e.target.value; refreshBaseTagsAndProgress(); updateSeedPreview(); });
+  edu?.addEventListener("change", e => { incubatorState.profile.edu = e.target.value; refreshBaseTagsAndProgress(); updateSeedPreview(); });
+  location?.addEventListener("input", e => { incubatorState.profile.location = e.target.value; updateSeedPreview(); });
   refreshBaseTagsAndProgress();
+  updateSeedPreview();
 }
 
 function bindValueCompass() {
@@ -1127,6 +1596,7 @@ function bindValueCompass() {
       if (idx <= 0) return;
       [incubatorState.values[idx - 1], incubatorState.values[idx]] = [incubatorState.values[idx], incubatorState.values[idx - 1]];
       renderValueSortList();
+      updateSeedPreview();
       return;
     }
     if (down !== undefined) {
@@ -1134,18 +1604,21 @@ function bindValueCompass() {
       if (idx >= incubatorState.values.length - 1) return;
       [incubatorState.values[idx + 1], incubatorState.values[idx]] = [incubatorState.values[idx], incubatorState.values[idx + 1]];
       renderValueSortList();
+      updateSeedPreview();
     }
   });
 
-  document.getElementById("principle-1")?.addEventListener("input", e => { incubatorState.principles.p1 = e.target.value; });
-  document.getElementById("principle-2")?.addEventListener("input", e => { incubatorState.principles.p2 = e.target.value; });
+  document.getElementById("principle-1")?.addEventListener("input", e => { incubatorState.principles.p1 = e.target.value; updateSeedPreview(); });
+  document.getElementById("principle-2")?.addEventListener("input", e => { incubatorState.principles.p2 = e.target.value; updateSeedPreview(); });
   document.getElementById("principle-justice")?.addEventListener("input", e => {
     incubatorState.principles.justice = Number(e.target.value);
     document.getElementById("val-principle-justice").textContent = String(e.target.value);
+    updateSeedPreview();
   });
   document.getElementById("principle-collective")?.addEventListener("input", e => {
     incubatorState.principles.collective = Number(e.target.value);
     document.getElementById("val-principle-collective").textContent = String(e.target.value);
+    updateSeedPreview();
   });
 }
 
@@ -1177,6 +1650,7 @@ function bindTimelineActions() {
     document.getElementById("timeline-year").value = "";
     document.getElementById("timeline-desc").value = "";
     renderTimelineList();
+    updateSeedPreview();
   });
 }
 
@@ -1189,6 +1663,7 @@ function bindScenarioActions() {
     if (!scenario) return;
     scenario.answer = option.dataset.opt;
     renderScenarioList();
+    updateSeedPreview();
   });
 
   document.getElementById("scenario-list")?.addEventListener("input", evt => {
@@ -1197,18 +1672,25 @@ function bindScenarioActions() {
     const scenario = incubatorState.scenarios.find(item => item.id === sid);
     if (!scenario) return;
     scenario.reason = evt.target.value;
+    updateSeedPreview();
   });
 }
 
 function renderIncubatorPool() {
   const pool = document.getElementById("incubator-pool");
   if (!pool) return;
-  pool.innerHTML = incubatorState.customAgents.map(agent => `
-    <div class="seed-agent ${agent.id === incubatorState.selectedAgentId ? "active" : ""}" data-agent-id="${agent.id}">
-      <div class="mini-orb"></div>
-      <div class="seed-agent-name">${agent.name}</div>
-    </div>
-  `).join("");
+  pool.innerHTML = incubatorState.customAgents.map(agent => {
+    const archetype = getIncubatorArchetype(agent);
+    return `
+      <div class="seed-agent ${agent.id === incubatorState.selectedAgentId ? "active" : ""}" data-agent-id="${agent.id}">
+        <div class="mini-orb archetype-${archetype.id}" style="--orb-a:${archetype.colorA};--orb-b:${archetype.colorB};">
+          <span class="orb-icon">${archetype.icon}</span>
+        </div>
+        <div class="seed-agent-name">${agent.name}</div>
+        <div class="seed-agent-meta">${archetype.label}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 function getSelectedCustomAgent() {
@@ -1233,23 +1715,14 @@ function updateAgentPreview(agent) {
   const accessory = document.getElementById("agent-preview-accessory");
   if (!style || !accessory) return;
 
-  const { rationality, risk, emotion } = agent.offsets;
-  let styleText = "中性风格";
-  let accessoryText = "配饰：标准环";
-
-  if (rationality > 15) {
-    styleText = "冷静理性";
-    accessoryText = "配饰：几何镜片";
-  } else if (risk > 15) {
-    styleText = "冒险执行";
-    accessoryText = "配饰：能量棱环";
-  } else if (emotion > 15) {
-    styleText = "情绪共鸣";
-    accessoryText = "配饰：波纹光晕";
-  }
-  style.textContent = styleText;
-  accessory.textContent = accessoryText;
-  window.__latestPreviewOffsets = { rationality, risk, emotion };
+  const archetype = getIncubatorArchetype(agent);
+  style.textContent = `${archetype.icon} ${archetype.styleText}`;
+  accessory.textContent = archetype.accessoryText;
+  window.__latestPreviewOffsets = {
+    rationality: Number(agent.offsets.rationality || 0),
+    risk: Number(agent.offsets.risk || 0),
+    emotion: Number(agent.offsets.emotion || 0)
+  };
   window.dispatchEvent(new CustomEvent("agentPreviewUpdate", { detail: window.__latestPreviewOffsets }));
 }
 
@@ -1260,6 +1733,7 @@ function bindAgentCustomizer() {
     incubatorState.selectedAgentId = card.dataset.agentId;
     renderIncubatorPool();
     syncSelectedAgentEditor();
+    updateSeedPreview();
   });
 
   document.getElementById("btn-add-agent")?.addEventListener("click", () => {
@@ -1277,6 +1751,7 @@ function bindAgentCustomizer() {
     incubatorState.selectedAgentId = newAgent.id;
     renderIncubatorPool();
     syncSelectedAgentEditor();
+    updateSeedPreview();
   });
 
   document.getElementById("custom-agent-name")?.addEventListener("input", evt => {
@@ -1284,6 +1759,7 @@ function bindAgentCustomizer() {
     if (!agent) return;
     agent.name = String(evt.target.value || "新 Agent");
     renderIncubatorPool();
+    updateSeedPreview();
   });
 
   ["rationality", "risk", "emotion"].forEach(key => {
@@ -1294,6 +1770,7 @@ function bindAgentCustomizer() {
       agent.offsets[key] = value;
       document.getElementById(`val-offset-${key}`).textContent = String(value);
       updateAgentPreview(agent);
+      updateSeedPreview();
     });
   });
 }
@@ -1452,11 +1929,30 @@ function updateClock() {
   node.textContent = new Date().toLocaleTimeString();
 }
 
+function getRiskThemeColor(score = 50, alphaScale = 1) {
+  const safe = Math.max(0, Math.min(100, Number(score) || 0));
+  const hue = 188 + Math.round((safe / 100) * 88); // cyan -> blue-violet
+  const alpha = (0.22 + (safe / 100) * 0.28) * alphaScale;
+  return `hsla(${hue}, 84%, 62%, ${Math.max(0.14, Math.min(0.62, alpha)).toFixed(2)})`;
+}
+
 function updateInsightPanel() {
   const clusters = document.getElementById("cluster-list");
   const heat = document.getElementById("mini-heatmap");
   const suggestion = document.getElementById("next-suggestion");
   if (!clusters || !heat || !suggestion) return;
+
+  const source = decisionState.analysis;
+  if (source) {
+    clusters.innerHTML = `
+      <div class="cluster-card" draggable="true">共识：${source.consensus[0] || "暂无"}</div>
+      <div class="cluster-card" draggable="true">分歧：${source.divergence[0] || "暂无"}</div>
+    `;
+    const avgScores = source.options.flatMap(option => Object.values(option.risk));
+    heat.innerHTML = avgScores.slice(0, 6).map(v => `<div style="background:${getRiskThemeColor(v, 1.06)};"></div>`).join("");
+    suggestion.textContent = `建议下一步：优先推进「${source.best?.name || decisionState.options[0]}」，并安排一轮针对分歧点的追问。`;
+    return;
+  }
 
   clusters.innerHTML = `
     <div class="cluster-card" draggable="true">共识：先做小范围验证（${agents.length}个Agent提及）</div>
@@ -1468,49 +1964,163 @@ function updateInsightPanel() {
   suggestion.textContent = `建议下一步：让 ${agents[0]?.name || "理性Agent"} 与 ${agents[1]?.name || "冒险Agent"} 发起一次辩论。`;
 }
 
-function initDecisionView() {
+function hydrateDecisionSetup() {
+  const topicInput = document.getElementById("decision-topic");
+  const optionA = document.getElementById("decision-option-a");
+  const optionB = document.getElementById("decision-option-b");
+  const optionC = document.getElementById("decision-option-c");
+  if (!topicInput || !optionA || !optionB || !optionC) return;
+  topicInput.value = decisionState.topic;
+  optionA.value = decisionState.options[0] || "";
+  optionB.value = decisionState.options[1] || "";
+  optionC.value = decisionState.options[2] || "";
+}
+
+function syncDecisionStateFromInputs() {
+  const topicInput = document.getElementById("decision-topic");
+  const optionA = document.getElementById("decision-option-a");
+  const optionB = document.getElementById("decision-option-b");
+  const optionC = document.getElementById("decision-option-c");
+  if (!topicInput || !optionA || !optionB || !optionC) return;
+  decisionState.topic = String(topicInput.value || "").trim();
+  decisionState.options = [optionA.value, optionB.value, optionC.value]
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+  if (!decisionState.options.length) decisionState.options = ["方案A", "方案B", "方案C"];
+}
+
+function extractDecisionSignals(text) {
+  const t = String(text || "");
+  return {
+    caution: (t.match(/验证|试点|稳|现金流|风险|谨慎/g) || []).length,
+    aggressive: (t.match(/窗口|立即|抢占|扩大|加码|投入/g) || []).length,
+    emotional: (t.match(/情绪|关系|感受|共情|压力/g) || []).length
+  };
+}
+
+function generateDecisionAnalysis() {
+  const userQuestion = [...dialogState.history].reverse().find(item => item.sender === "user")?.content || "";
+  const agentReplies = dialogState.history.filter(item => item.sender === "agent").slice(-15);
+  const merged = agentReplies.map(item => item.content).join(" ");
+  const signals = extractDecisionSignals(merged);
+  const options = decisionState.options.map((name, idx) => {
+    const base = 48 + idx * 8;
+    const finance = Math.max(5, Math.min(95, base + signals.aggressive * 2 - signals.caution * 2));
+    const emotion = Math.max(5, Math.min(95, base - signals.emotional * 2 + idx * 3));
+    const time = Math.max(5, Math.min(95, base + signals.aggressive * 3 - signals.caution));
+    return { name, risk: { 财务: finance, 情感: emotion, 时间: time } };
+  });
+
+  const consensus = [];
+  const divergence = [];
+  if (signals.caution >= signals.aggressive) {
+    consensus.push(`优先“小步验证”再扩大投入，与当前对话倾向一致。`);
+  }
+  if (signals.aggressive > 0) {
+    divergence.push("是否要立即放大投入规模，Agent存在明显分歧。");
+  }
+  if (signals.emotional > 0) {
+    divergence.push("是否优先处理关系与情绪风险，观点分化。");
+  }
+  if (!consensus.length) consensus.push("先明确目标与约束，再进入执行阶段。");
+  if (!divergence.length) divergence.push("当前分歧较小，可直接进入执行方案细化。");
+
+  const wf = Number(document.getElementById("w-finance")?.value || 40);
+  const we = Number(document.getElementById("w-emotion")?.value || 25);
+  const wt = Number(document.getElementById("w-time")?.value || 35);
+  const weighted = options.map(item => {
+    const score = (item.risk.财务 * wf + item.risk.情感 * we + item.risk.时间 * wt) / Math.max(1, (wf + we + wt));
+    return { ...item, weighted: Math.round(score) };
+  });
+  const best = [...weighted].sort((a, b) => a.weighted - b.weighted)[0];
+
+  return {
+    topic: decisionState.topic || userQuestion || "当前决策议题",
+    options: weighted,
+    consensus,
+    divergence,
+    best
+  };
+}
+
+function renderDecisionClusters(analysis) {
+  const consensusTitle = document.getElementById("consensus-title");
+  const divergenceTitle = document.getElementById("divergence-title");
+  const consensusList = document.getElementById("consensus-list");
+  const divergenceList = document.getElementById("divergence-list");
+  if (!consensusTitle || !divergenceTitle || !consensusList || !divergenceList) return;
+  consensusTitle.textContent = `共识点 (${analysis.consensus.length})`;
+  divergenceTitle.textContent = `分歧点 (${analysis.divergence.length})`;
+  consensusList.innerHTML = analysis.consensus.map(item => `<div class="cluster-item" draggable="true">${item}</div>`).join("");
+  divergenceList.innerHTML = analysis.divergence.map(item => `<div class="cluster-item" draggable="true">${item}</div>`).join("");
+}
+
+function renderDecisionRiskGrid(analysis) {
   const riskGrid = document.getElementById("risk-matrix-grid");
   const riskDetail = document.getElementById("risk-detail");
-  if (riskGrid) {
-    const options = ["方案A", "方案B", "方案C"];
-    const dims = ["财务", "情感", "时间"];
-    const rows = [`<div class="risk-cell header">维度/选项</div>${options.map(v => `<div class="risk-cell header">${v}</div>`).join("")}`];
-    dims.forEach(d => {
-      rows.push(`<div class="risk-cell header">${d}</div>`);
-      options.forEach(o => {
-        const score = Math.floor(35 + Math.random() * 55);
-        const color = `rgba(${score > 70 ? "248,113,113" : score > 50 ? "245,158,11" : "74,222,128"},0.38)`;
-        rows.push(`<div class="risk-cell" data-risk="${d}-${o}-${score}" style="background:${color};">${score}</div>`);
-      });
+  if (!riskGrid) return;
+  const options = analysis.options.map(v => v.name);
+  const dims = ["财务", "情感", "时间"];
+  const rows = [`<div class="risk-cell header">维度/选项</div>${options.map(v => `<div class="risk-cell header">${v}</div>`).join("")}`];
+  dims.forEach(dim => {
+    rows.push(`<div class="risk-cell header">${dim}</div>`);
+    analysis.options.forEach(item => {
+      const score = item.risk[dim];
+      const color = getRiskThemeColor(score);
+      rows.push(`<div class="risk-cell" data-risk="${dim}-${item.name}-${score}" style="background:${color};">${score}</div>`);
     });
-    riskGrid.innerHTML = rows.join("");
-    riskGrid.querySelectorAll(".risk-cell[data-risk]").forEach(cell => {
-      cell.addEventListener("click", () => {
-        const [dim, option, score] = cell.dataset.risk.split("-");
-        if (riskDetail) riskDetail.textContent = `${option} 在 ${dim} 维度风险评分 ${score}，主要由 ${agents[0]?.name || "理性Agent"} 与 ${agents[1]?.name || "冒险Agent"} 评估。`;
-      });
+  });
+  riskGrid.innerHTML = rows.join("");
+  riskGrid.querySelectorAll(".risk-cell[data-risk]").forEach(cell => {
+    cell.addEventListener("click", () => {
+      const [dim, option, score] = cell.dataset.risk.split("-");
+      if (riskDetail) riskDetail.textContent = `${option} 在 ${dim} 维度风险评分 ${score}。`;
     });
-  }
+  });
+}
 
+function renderDecisionTree(analysis) {
   const tree = document.getElementById("decision-tree");
-  if (tree) {
-    tree.innerHTML = `
-      <div class="tree-node"><button data-tree="root">决策起点：是否立即重投</button>
-        <div class="tree-node"><button data-tree="a">方案A：小步快跑</button>
-          <div class="tree-node">后果：试点验证成功概率 72%</div>
-        </div>
-        <div class="tree-node"><button data-tree="b">方案B：一次性投入</button>
-          <div class="tree-node">后果：品牌曝光高但现金流压力大</div>
-        </div>
+  if (!tree) return;
+  const [a, b, c] = analysis.options;
+  tree.innerHTML = `
+    <div class="tree-node"><button data-tree="root">决策起点：${analysis.topic}</button>
+      <div class="tree-node"><button data-tree="a">${a?.name || "方案A"}（综合风险 ${a?.weighted ?? "-" }）</button>
+        <div class="tree-node">后果：执行门槛中等，适合先验证再扩展。</div>
       </div>
-    `;
-    tree.querySelectorAll("button[data-tree]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const next = btn.nextElementSibling;
-        if (next) next.classList.toggle("hidden");
-      });
+      <div class="tree-node"><button data-tree="b">${b?.name || "方案B"}（综合风险 ${b?.weighted ?? "-" }）</button>
+        <div class="tree-node">后果：收益潜力更高，但波动与资源压力更大。</div>
+      </div>
+      <div class="tree-node"><button data-tree="c">${c?.name || "方案C"}（综合风险 ${c?.weighted ?? "-" }）</button>
+        <div class="tree-node">后果：更保守稳健，推进速度较慢。</div>
+      </div>
+      <div class="tree-node">推荐：${analysis.best?.name || "待定"}（综合风险最低）</div>
+    </div>
+  `;
+  tree.querySelectorAll("button[data-tree]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const next = btn.nextElementSibling;
+      if (next) next.classList.toggle("hidden");
     });
+  });
+}
+
+function refreshDecisionAnalysis() {
+  syncDecisionStateFromInputs();
+  const analysis = generateDecisionAnalysis();
+  decisionState.analysis = analysis;
+  renderDecisionClusters(analysis);
+  renderDecisionRiskGrid(analysis);
+  renderDecisionTree(analysis);
+  updateInsightPanel();
+}
+
+function initDecisionView() {
+  if (!decisionState.topic) {
+    decisionState.topic = [...dialogState.history].reverse().find(item => item.sender === "user")?.content || "当前决策议题";
   }
+  hydrateDecisionSetup();
+  refreshDecisionAnalysis();
 }
 
 function setInsightPanel(open, pinned = null) {
@@ -1534,16 +2144,19 @@ function seedInitialChat() {
     content: "建议先量化风险，列出 3 种情景。",
     theme: "theme-rational"
   });
+  recordDialogMessage({ sender: "agent", agentName: "理性+", content: "建议先量化风险，列出 3 种情景。" });
   appendMessage({
     sender: "agent",
     agentName: "冒险+",
     content: "窗口期有限，建议先占位后优化。",
     theme: "theme-risk"
   });
+  recordDialogMessage({ sender: "agent", agentName: "冒险+", content: "窗口期有限，建议先占位后优化。" });
   appendMessage({
     sender: "user",
     content: "可以展开说说市场进入的阻力吗？"
   });
+  recordDialogMessage({ sender: "user", content: "可以展开说说市场进入的阻力吗？" });
 }
 
 function bindActions() {
@@ -1580,7 +2193,14 @@ function bindActions() {
   document.getElementById("btn-google")?.addEventListener("click", googleQuickLogin);
   document.getElementById("btn-back-login")?.addEventListener("click", logoutToAuth);
   document.getElementById("btn-incubate")?.addEventListener("click", () => scrollToSection("incubate"));
-  document.getElementById("btn-view-matrix")?.addEventListener("click", () => scrollToSection("matrix"));
+  document.getElementById("btn-view-matrix")?.addEventListener("click", () => {
+    if (!decisionState.topic) {
+      decisionState.topic = [...dialogState.history].reverse().find(item => item.sender === "user")?.content || "当前决策议题";
+      hydrateDecisionSetup();
+    }
+    refreshDecisionAnalysis();
+    scrollToSection("matrix");
+  });
   document.getElementById("btn-back-dialog")?.addEventListener("click", () => scrollToSection("dialog"));
   document.getElementById("btn-continue-chat")?.addEventListener("click", () => scrollToSection("dialog"));
 
@@ -1600,7 +2220,19 @@ function bindActions() {
   document.getElementById("btn-send")?.addEventListener("click", mockSpeak);
   document.getElementById("btn-debate")?.addEventListener("click", mockDebate);
   document.getElementById("btn-upload")?.addEventListener("click", () => alert("上传文件入口（RAG）已预留。"));
-  document.getElementById("btn-mention")?.addEventListener("click", () => alert(`可指定Agent：${agents.map(a => a.name).join(" / ")}`));
+  document.getElementById("btn-mention")?.addEventListener("click", evt => {
+    evt.stopPropagation();
+    toggleMentionPicker();
+  });
+  document.getElementById("mention-picker-list")?.addEventListener("click", evt => {
+    const item = evt.target.closest("[data-mention-agent]");
+    if (!item) return;
+    insertMentionToInput(item.dataset.mentionAgent || "");
+  });
+  document.addEventListener("click", evt => {
+    if (evt.target.closest("#mention-picker") || evt.target.closest("#btn-mention")) return;
+    closeMentionPicker();
+  });
   document.getElementById("btn-new-agent")?.addEventListener("click", () => scrollToSection("incubate"));
   document.getElementById("btn-edit-agent")?.addEventListener("click", () => alert("编辑模式：可拖拽排序与调整偏移。"));
 
@@ -1640,6 +2272,7 @@ function bindActions() {
   });
 
   document.getElementById("btn-generate-report")?.addEventListener("click", () => {
+    refreshDecisionAnalysis();
     document.getElementById("report-modal")?.classList.remove("hidden");
   });
   document.getElementById("btn-close-report")?.addEventListener("click", () => {
@@ -1649,9 +2282,23 @@ function bindActions() {
   document.getElementById("btn-share-report")?.addEventListener("click", () => alert("分享链接已生成（示例）。"));
   document.getElementById("btn-copy-report")?.addEventListener("click", () => alert("报告摘要已复制。"));
   document.getElementById("btn-export-tree")?.addEventListener("click", () => alert("树图PNG导出入口已预留。"));
-  document.getElementById("btn-auto-layout")?.addEventListener("click", () => initDecisionView());
-  document.getElementById("btn-refresh-report")?.addEventListener("click", () => initDecisionView());
-  document.getElementById("risk-view-mode")?.addEventListener("change", () => initDecisionView());
+  document.getElementById("btn-auto-layout")?.addEventListener("click", () => refreshDecisionAnalysis());
+  document.getElementById("btn-refresh-report")?.addEventListener("click", () => refreshDecisionAnalysis());
+  document.getElementById("risk-view-mode")?.addEventListener("change", () => refreshDecisionAnalysis());
+  document.getElementById("btn-sync-decision")?.addEventListener("click", () => {
+    refreshDecisionAnalysis();
+    scrollToSection("matrix");
+  });
+  ["decision-topic", "decision-option-a", "decision-option-b", "decision-option-c"].forEach(id => {
+    document.getElementById(id)?.addEventListener("input", () => {
+      syncDecisionStateFromInputs();
+    });
+  });
+  ["w-finance", "w-emotion", "w-time"].forEach(id => {
+    document.getElementById(id)?.addEventListener("input", () => {
+      if (decisionState.analysis) refreshDecisionAnalysis();
+    });
+  });
 }
 
 function bootstrapAuth() {
@@ -1696,6 +2343,7 @@ function trackSectionForResume() {
 renderAgents("agent-list");
 initIncubator();
 bindActions();
+syncDeepSeekStatus();
 bootstrapAuth();
 trackSectionForResume();
 seedInitialChat();

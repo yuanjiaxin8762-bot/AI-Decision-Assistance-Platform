@@ -1,4 +1,4 @@
-# Persona Switch 静态原型
+# Persona Switch（后端代理版）
 
 深色蓝紫科技感、多 Agent 决策辅助原型。包含：
 
@@ -6,20 +6,29 @@
 - 多 Agent 对话：在场感脉冲、辩论按钮、追问/发送。
 - 决策矩阵：观点聚类、风险热力图占位、决策路径树、报告导出按钮。
 
-## 运行
+## 运行（推荐）
 
-无需构建，直接双击 `index.html`，或启本地静态服：
+已内置后端代理接口，前端会调用 `/api/chat`。请按下面步骤启动：
 
 ```bash
-# Python 3
-python -m http.server 8000
-# 或 PowerShell
-Start-Process http://localhost:8000 ; python -m http.server 8000
+# 1) 安装依赖
+pip install fastapi uvicorn httpx
+
+# 2) 设置 DeepSeek Key（PowerShell 当前窗口有效）
+$env:DEEPSEEK_API_KEY="你的DeepSeekKey"
+
+# 3) 启动服务（同时托管前端静态页面 + 后端代理）
+uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-## 后续接入建议
+浏览器访问：
 
-- 将 `app.js` 中的 `mockSpeak` / `mockDebate` 替换为后端流式生成接口。
-- Agent 头像：可接入 readyplayer.me 或自定义 Three.js/GLTF 占位。
-- 脉冲强度：按模型情感/置信度动态调节动画速度与颜色。
-- 决策矩阵：用实际意见数据构建风险热力图与路径树可视化（Chart.js/D3）。
+```bash
+http://127.0.0.1:8000
+```
+
+## 说明
+
+- `server.py` 提供后端代理：`POST /api/chat`
+- `app.js` 不再直接暴露 DeepSeek Key
+- 若后端未启动或 Key 未配置，对话会进入前端兜底回复

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Persona Switch · 多 Agent 决策辅助</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=20260307-7" />
 </head>
 <body>
   <div id="auth-screen" class="auth-screen">
@@ -326,7 +326,7 @@
       <aside class="dialog-left glass-panel">
         <div class="left-head">
           <h3>Agent 边栏</h3>
-          <p class="sub">可静音、激活、排序、编辑</p>
+          <p class="sub">可启用、聚焦、排序、编辑</p>
         </div>
         <div id="agent-list" class="agent-sidebar-list"></div>
         <div class="left-foot">
@@ -351,11 +351,28 @@
           <div id="dialog-3d-stage" class="dialog-3d-stage"></div>
         </div>
 
+        <div class="decision-setup glass-panel">
+          <div class="decision-setup-head">
+            <h4>决策窗口</h4>
+            <button class="btn ghost" id="btn-sync-decision" type="button">同步到决策分析</button>
+          </div>
+          <div class="decision-setup-grid">
+            <input id="decision-topic" type="text" placeholder="输入当前要决策的问题（例如：本周是否扩大投放）" />
+            <input id="decision-option-a" type="text" placeholder="方案A" />
+            <input id="decision-option-b" type="text" placeholder="方案B" />
+            <input id="decision-option-c" type="text" placeholder="方案C" />
+          </div>
+        </div>
+
         <div class="bubbles chat-stream" id="chat-area"></div>
 
         <div class="composer-shell">
           <div class="quick-bar">
             <button class="quick-btn" id="btn-mention">@指定Agent</button>
+            <div class="mention-picker hidden" id="mention-picker">
+              <div class="mention-picker-title">指定回复 Agent</div>
+              <div class="mention-picker-list" id="mention-picker-list"></div>
+            </div>
             <button class="quick-btn" id="btn-debate">发起辩论</button>
             <button class="quick-btn" id="btn-upload">上传文件</button>
           </div>
@@ -393,14 +410,12 @@
         <div class="card decision-col">
           <h4>观点聚类</h4>
           <div class="cluster-block consensus">
-            <div class="cluster-title">共识点 (2)</div>
-            <div class="cluster-item" draggable="true">先确保现金流安全，再试点。</div>
-            <div class="cluster-item" draggable="true">低成本验证市场比一次性重投更稳。</div>
+            <div class="cluster-title" id="consensus-title">共识点 (0)</div>
+            <div id="consensus-list"></div>
           </div>
           <div class="cluster-block divergence">
-            <div class="cluster-title">分歧点 (2)</div>
-            <div class="cluster-item" draggable="true">是否立刻扩大投放规模。</div>
-            <div class="cluster-item" draggable="true">品牌投入优先级是否高于产品迭代。</div>
+            <div class="cluster-title" id="divergence-title">分歧点 (0)</div>
+            <div id="divergence-list"></div>
           </div>
         </div>
 
@@ -456,8 +471,8 @@
     <p class="muted">Persona Switch · 基于人格的多 Agent 决策辅助 · 蓝紫科技感原型</p>
   </footer>
 
-  <script type="module" src="./three-preview.js"></script>
-  <script type="module" src="./dialog-visuals.js"></script>
-  <script src="./app.js"></script>
+  <script type="module" src="./three-preview.js?v=20260307-7"></script>
+  <script type="module" src="./dialog-visuals.js?v=20260307-7"></script>
+  <script src="./app.js?v=20260307-7"></script>
 </body>
 </html>

@@ -65,6 +65,10 @@ function mountParticleBackground() {
 function mountDialogStage() {
   const host = document.getElementById("dialog-3d-stage");
   if (!host) return;
+  const stageWrap = host.parentElement;
+  const showcase = document.createElement("div");
+  showcase.className = "dialog-agent-showcase";
+  stageWrap?.appendChild(showcase);
 
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -73,7 +77,7 @@ function mountDialogStage() {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, host.clientWidth / host.clientHeight, 0.1, 100);
-  camera.position.set(0, 2.4, 9);
+  camera.position.set(0, 1.28, 5.1);
 
   const ambient = new THREE.AmbientLight(0x9db0ff, 0.8);
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -88,6 +92,48 @@ function mountDialogStage() {
   floor.position.y = -1.2;
   scene.add(floor);
 
+  // Soft nebula backdrop to increase stage atmosphere
+  const nebula = new THREE.Mesh(
+    new THREE.PlaneGeometry(14, 6.8),
+    new THREE.MeshBasicMaterial({
+      color: 0x3b4e9a,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  nebula.position.set(0, 0.9, -2.2);
+  scene.add(nebula);
+
+  const glowRing = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 3.5, 96),
+    new THREE.MeshBasicMaterial({
+      color: 0x6f7cff,
+      transparent: true,
+      opacity: 0.16,
+      side: THREE.DoubleSide
+    })
+  );
+  glowRing.rotation.x = Math.PI / 2;
+  glowRing.position.y = -0.58;
+  scene.add(glowRing);
+
+  const emptyCore = new THREE.Mesh(
+    new THREE.SphereGeometry(0.42, 24, 24),
+    new THREE.MeshStandardMaterial({
+      color: 0x7894ff,
+      emissive: 0x2f4aaf,
+      emissiveIntensity: 0.48,
+      roughness: 0.3,
+      metalness: 0.25,
+      transparent: true,
+      opacity: 0
+    })
+  );
+  emptyCore.position.set(0, 0.05, 0.9);
+  scene.add(emptyCore);
+
   const agentNodes = [];
   const defaultProfiles = [
     { name: "理性+", color: "#546dff", accent: "#5ab8ff", accessory: "visor", avatar: "./assets/agents/rational.png" },
@@ -96,6 +142,18 @@ function mountDialogStage() {
     { name: "直觉", color: "#67a8ff", accent: "#7dd7ff", accessory: "antenna", avatar: "./assets/agents/intuitive.png" },
     { name: "谨慎", color: "#5840d8", accent: "#63d4a8", accessory: "shield", avatar: "./assets/agents/guardian.png" }
   ];
+  let currentProfiles = [...defaultProfiles];
+  let allProfiles = [...defaultProfiles.map(item => ({ ...item, enabled: true }))];
+  let focusName = defaultProfiles[0]?.name || "";
+  let stageLayout = {
+    orbitX: 1.7,
+    orbitZ: 0.75,
+    focusZ: 1.65,
+    baseY: 0.02,
+    focusY: 0.34,
+    spriteScale: 3.5,
+    haloScale: 1.65
+  };
   const textureLoader = new THREE.TextureLoader();
   const textureCache = new Map();
 
@@ -182,7 +240,8 @@ function mountDialogStage() {
         })
       );
       halo.rotation.x = Math.PI / 2;
-      halo.position.y = -0.32;
+      halo.position.y = -0.22;
+      halo.scale.setScalar(stageLayout.haloScale);
       g.add(halo);
 
       const sprite = new THREE.Sprite(
@@ -192,8 +251,8 @@ function mountDialogStage() {
           depthWrite: false
         })
       );
-      sprite.scale.set(1.55, 1.55, 1);
-      sprite.position.y = 0.1;
+      sprite.scale.set(stageLayout.spriteScale, stageLayout.spriteScale, 1);
+      sprite.position.y = 0.32;
       g.add(sprite);
     } else {
       const shell = new THREE.Mesh(
@@ -218,9 +277,54 @@ function mountDialogStage() {
     }
 
     const angle = (Math.PI * 2 * index) / total;
-    g.position.set(Math.cos(angle) * 2.9, -0.15, Math.sin(angle) * 1.2);
+    g.position.set(Math.cos(angle) * stageLayout.orbitX, stageLayout.baseY, Math.sin(angle) * stageLayout.orbitZ);
     scene.add(g);
     return { node: g, angleBase: angle, profile };
+  };
+
+  const calcStageLayout = total => {
+    if (total <= 1) {
+      return {
+        orbitX: 0,
+        orbitZ: 0,
+        focusZ: 1.7,
+        baseY: 0.08,
+        focusY: 0.42,
+        spriteScale: 4.1,
+        haloScale: 1.95
+      };
+    }
+    if (total === 2) {
+      return {
+        orbitX: 0.95,
+        orbitZ: 0.34,
+        focusZ: 1.68,
+        baseY: 0.05,
+        focusY: 0.4,
+        spriteScale: 3.75,
+        haloScale: 1.78
+      };
+    }
+    if (total === 3) {
+      return {
+        orbitX: 1.18,
+        orbitZ: 0.46,
+        focusZ: 1.66,
+        baseY: 0.03,
+        focusY: 0.36,
+        spriteScale: 3.35,
+        haloScale: 1.68
+      };
+    }
+    return {
+      orbitX: 1.32,
+      orbitZ: 0.5,
+      focusZ: 1.63,
+      baseY: 0.02,
+      focusY: 0.34,
+      spriteScale: 3.0,
+      haloScale: 1.58
+    };
   };
 
   const rebuildAgents = (profiles = defaultProfiles) => {
@@ -228,20 +332,62 @@ function mountDialogStage() {
       const item = agentNodes.pop();
       scene.remove(item.node);
     }
-    const safe = profiles.length ? profiles : defaultProfiles;
+    const enabledOnly = profiles.filter(item => item.enabled !== false);
+    const safe = enabledOnly.length ? enabledOnly : [];
+    currentProfiles = safe;
+    stageLayout = calcStageLayout(safe.length);
     safe.forEach((profile, idx) => {
       agentNodes.push(createAgentNode(profile, idx, safe.length));
     });
   };
-  rebuildAgents(defaultProfiles);
+
+  const renderShowcase = (profiles = []) => {
+    if (!showcase) return;
+    const safe = profiles.length ? profiles : defaultProfiles.map(item => ({ ...item, enabled: true }));
+    showcase.innerHTML = safe.map((profile, idx) => `
+      <button
+        class="stage-agent-card ${profile.enabled === false ? "disabled" : "enabled"} ${profile.name === focusName ? "active" : ""}"
+        data-stage-agent="${profile.name}"
+        data-stage-index="${idx}"
+        style="--agent-accent:${profile.accent || "#8aa4ff"};"
+        type="button"
+        title="${profile.name}"
+      >
+        <div class="stage-agent-glow"></div>
+        <img class="stage-agent-image" src="${profile.avatar || ""}" alt="${profile.name}" loading="lazy" />
+      </button>
+    `).join("");
+  };
+
+  showcase.addEventListener("click", evt => {
+    const card = evt.target.closest(".stage-agent-card");
+    if (!card) return;
+    const name = card.dataset.stageAgent || "";
+    const idx = Number(card.dataset.stageIndex || 0);
+    focusName = name;
+    renderShowcase(allProfiles);
+    window.dispatchEvent(new CustomEvent("dialogSpeakerFocus", { detail: { name, index: idx } }));
+  });
+
+  rebuildAgents(defaultProfiles.map(item => ({ ...item, enabled: true })));
+  renderShowcase(allProfiles);
 
   let focusIndex = 0;
   const animate = () => {
     const t = performance.now() * 0.001;
+    nebula.material.opacity = 0.16 + Math.sin(t * 0.65) * 0.05;
+    nebula.rotation.z = Math.sin(t * 0.22) * 0.04;
+    glowRing.rotation.z += 0.0026;
+    glowRing.material.opacity = 0.12 + Math.sin(t * 1.1) * 0.05;
+    emptyCore.material.opacity += (((agentNodes.length ? 0 : 0.78) - emptyCore.material.opacity) * 0.08);
+    emptyCore.position.y = 0.06 + Math.sin(t * 2.2) * 0.05;
+    emptyCore.rotation.y += 0.01;
     agentNodes.forEach((entry, idx) => {
-      const targetX = idx === focusIndex ? 0 : Math.cos(entry.angleBase) * 2.9;
-      const targetZ = idx === focusIndex ? 2.2 : Math.sin(entry.angleBase) * 1.2;
-      const targetY = idx === focusIndex ? 0.25 : -0.15 + Math.sin(t * 1.3 + idx) * 0.06;
+      const targetX = idx === focusIndex ? 0 : Math.cos(entry.angleBase) * stageLayout.orbitX;
+      const targetZ = idx === focusIndex ? stageLayout.focusZ : Math.sin(entry.angleBase) * stageLayout.orbitZ;
+      const targetY = idx === focusIndex
+        ? stageLayout.focusY
+        : stageLayout.baseY + Math.sin(t * 1.3 + idx) * 0.06;
       entry.node.position.x += (targetX - entry.node.position.x) * 0.055;
       entry.node.position.z += (targetZ - entry.node.position.z) * 0.055;
       entry.node.position.y += (targetY - entry.node.position.y) * 0.055;
@@ -254,14 +400,33 @@ function mountDialogStage() {
 
   window.addEventListener("dialogSpeakerFocus", evt => {
     const id = Number(evt.detail?.index || 0);
+    const name = String(evt.detail?.name || "");
+    if (name) {
+      focusName = name;
+      renderShowcase(allProfiles);
+      const byName = currentProfiles.findIndex(item => item.name === name);
+      if (byName >= 0) {
+        focusIndex = byName;
+        return;
+      }
+    }
     focusIndex = Number.isNaN(id) ? 0 : Math.max(0, Math.min(agentNodes.length - 1, id));
+    const fallback = currentProfiles[focusIndex];
+    if (fallback?.name) {
+      focusName = fallback.name;
+      renderShowcase(allProfiles);
+    }
   });
 
   window.addEventListener("dialogAgentsUpdate", evt => {
     const profiles = evt.detail?.agents;
     if (!Array.isArray(profiles)) return;
+    allProfiles = profiles;
     rebuildAgents(profiles);
     focusIndex = Math.max(0, Math.min(focusIndex, agentNodes.length - 1));
+    const focusProfile = currentProfiles[focusIndex];
+    if (focusProfile?.name) focusName = focusProfile.name;
+    renderShowcase(allProfiles);
   });
 
   window.addEventListener("resize", () => {
