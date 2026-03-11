@@ -472,10 +472,14 @@ textarea {
   min-width: 0;
 }
 .incubator-side {
-  height: fit-content;
+  height: auto;
   position: relative;
   top: auto;
   align-self: start;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .incubator-seed-preview {
   --seed-progress: 0;
@@ -485,11 +489,15 @@ textarea {
   --seed-pulse-speed: 2.4s;
   position: relative;
   height: 230px;
+  min-height: 220px;
   border-radius: 16px;
   border: 1px solid rgba(255,255,255,0.12);
   overflow: hidden;
   background: radial-gradient(circle at 30% 30%, rgba(122,60,255,0.18), rgba(11,15,26,0.65));
   transition: border-color 0.28s ease, background 0.28s ease, box-shadow 0.28s ease, filter 0.28s ease;
+}
+#incubator-seed-hint {
+  margin-top: auto;
 }
 .incubator-seed-preview .seed-core {
   position: absolute;
@@ -1870,5 +1878,6 @@ textarea::placeholder {
   }
   .incubator-side {
     position: static;
+    margin-top: 0 !important;
   }
 }

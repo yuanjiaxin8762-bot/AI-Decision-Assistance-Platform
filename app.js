@@ -1,8 +1,8 @@
 const DEFAULT_AGENTS = [
-  { name: "理性+", color: "linear-gradient(160deg,#6f7cff,#7a3cff)", mood: "calm" },
-  { name: "冒险+", color: "linear-gradient(160deg,#ff9f6f,#ff5f8a)", mood: "excite" },
-  { name: "情绪+", color: "linear-gradient(160deg,#7a3cff,#33e1ff)", mood: "wave" },
-  { name: "直觉", color: "linear-gradient(160deg,#33e1ff,#6f7cff)", mood: "flow" },
+  { name: "理性", color: "linear-gradient(160deg,#6f7cff,#7a3cff)", mood: "calm" },
+  { name: "冒险", color: "linear-gradient(160deg,#ff9f6f,#ff5f8a)", mood: "bold" },
+  { name: "情绪", color: "linear-gradient(160deg,#7a3cff,#33e1ff)", mood: "wave" },
+  { name: "感性", color: "linear-gradient(160deg,#33e1ff,#6f7cff)", mood: "flow" },
   { name: "谨慎", color: "linear-gradient(160deg,#7a3cff,#222b45)", mood: "guard" }
 ];
 
@@ -229,6 +229,7 @@ function switchTab(tabName) {
 function revealApp() {
   document.querySelectorAll(".app-shell").forEach(node => node.classList.remove("hidden"));
   document.getElementById("auth-screen")?.classList.add("hidden");
+  scheduleIncubatorAlignment();
 }
 
 function showAuthScreen(tabName = "login", message = "") {
@@ -362,9 +363,18 @@ function gradientByOffsets(item) {
 }
 
 function moodByOffsets(item) {
+  const name = String(item?.name || "");
+  if (name.includes("谨慎")) return "guard";
+  if (name.includes("感性")) return "flow";
+  if (name.includes("情绪")) return "wave";
+  if (name.includes("理性")) return "calm";
+  if (name.includes("冒险")) return "bold";
+
   const rational = Number(item.offsets?.rationality || 0);
   const risk = Number(item.offsets?.risk || 0);
   const emotion = Number(item.offsets?.emotion || 0);
+  if (risk <= -12) return "guard";
+  if (emotion >= 10 && emotion < 20) return "flow";
   if (rational >= 20) return "calm";
   if (risk >= 20) return "bold";
   if (emotion >= 20) return "wave";
@@ -373,7 +383,8 @@ function moodByOffsets(item) {
 
 function syncAgentsFromUser(user) {
   if (user?.customAgents && user.customAgents.length > 0) {
-    agents = user.customAgents.map(item => ({
+    const normalized = ensureFiveBaseAgents(user.customAgents);
+    agents = normalized.map(item => ({
       name: item.name || "新 Agent",
       color: gradientByOffsets(item),
       mood: moodByOffsets(item)
@@ -388,12 +399,14 @@ function routeAfterLogin(user, isNewUser = false) {
   revealApp();
   hydrateIncubatorFromUser(user);
   syncAgentsFromUser(user);
+  scheduleIncubatorAlignment();
 
   if (isNewUser || !user.hasAgent) {
     user.lastSection = "incubate";
     saveCurrentUser(user);
     setIncubatorStep(1);
     scrollToSection("incubate");
+    scheduleIncubatorAlignment();
     appendMessage({
       sender: "agent",
       agentName: "系统",
@@ -405,6 +418,7 @@ function routeAfterLogin(user, isNewUser = false) {
 
   const section = user.lastSection || "dialog";
   scrollToSection(section);
+  if (section === "incubate") scheduleIncubatorAlignment();
   appendMessage({
     sender: "agent",
     agentName: "系统",
@@ -473,8 +487,9 @@ function googleQuickLogin() {
       experiences: [],
       customAgents: [...buildBaseAgents()]
     };
-    saveUsers(users);
   }
+  users[email].customAgents = ensureFiveBaseAgents(users[email].customAgents || []);
+  saveUsers(users);
   setSession({ email });
   updateFeedback("Google 登录成功，正在恢复会话...", "ok");
   setTimeout(() => routeAfterLogin(users[email], false), 420);
@@ -755,7 +770,7 @@ function pickMentionAgentName() {
   if (dialogState.mentionTarget) return dialogState.mentionTarget;
   if (dialogState.selectedAgent) return dialogState.selectedAgent;
   const first = getUnmutedAgents()[0];
-  return first?.name || (agents[0]?.name || "理性+");
+  return first?.name || (agents[0]?.name || "理性");
 }
 
 function upsertInputMention(input, targetName) {
@@ -826,7 +841,7 @@ function insertMentionToInput(targetName = "") {
 
 async function mockDebate() {
   if (dialogState.isGenerating) return;
-  const candidates = getUnmutedAgents().slice(0, 3);
+  const candidates = getUnmutedAgents();
   if (!candidates.length) return;
   const topic = [...dialogState.history].reverse().find(item => item.sender === "user")?.content || "当前决策方向";
   const sendBtn = document.getElementById("btn-send");
@@ -1096,8 +1111,61 @@ function updateSeedPreview() {
   hint.textContent = `${map[step]} · 演化进度 ${Math.round(progress * 100)}%`;
 }
 
+function syncIncubatorSideAlignment() {
+  const layout = document.querySelector(".incubator-layout");
+  const side = document.querySelector(".incubator-side");
+  if (!layout || !side) return;
+
+  const layoutRect = layout.getBoundingClientRect();
+  const activeStep = document.querySelector(`.incubate-step[data-step="${incubatorState.currentStep}"]`);
+  if (!activeStep) return;
+
+  // 步骤1维持原先“覆盖主输入区+进度面板”的高度策略
+  if (incubatorState.currentStep === 1) {
+    const row = activeStep.querySelector(".grid.two");
+    const progressPanel = activeStep.querySelector(".input-progress-panel");
+    if (!row || !progressPanel) return;
+
+    const rowRect = row.getBoundingClientRect();
+    const progressRect = progressPanel.getBoundingClientRect();
+    const topOffset = Math.max(0, Math.round(rowRect.top - layoutRect.top));
+    const targetBottom = Math.round(progressRect.bottom - layoutRect.top);
+    const targetHeight = Math.max(320, targetBottom - topOffset);
+
+    side.style.marginTop = `${topOffset}px`;
+    side.style.height = `${targetHeight}px`;
+    return;
+  }
+
+  // 步骤2-6：与当前步骤左侧主内容块顶部齐平
+  const alignTarget =
+    // step4 顶部是经历框，不是 card，需优先对齐它
+    activeStep.querySelector(".experience-grid") ||
+    activeStep.querySelector(".scenario-list") ||
+    activeStep.querySelector(".grid.two > .card") ||
+    activeStep.querySelector(".grid.two-left > .card") ||
+    activeStep.querySelector(".card") ||
+    activeStep;
+  const targetRect = alignTarget.getBoundingClientRect();
+  const topOffset = Math.max(0, Math.round(targetRect.top - layoutRect.top));
+  side.style.marginTop = `${topOffset}px`;
+  side.style.height = "auto";
+}
+
+function scheduleIncubatorAlignment() {
+  requestAnimationFrame(() => {
+    syncIncubatorSideAlignment();
+    requestAnimationFrame(syncIncubatorSideAlignment);
+  });
+  setTimeout(syncIncubatorSideAlignment, 120);
+}
+
 function setIncubatorStep(step) {
   incubatorState.currentStep = Math.max(1, Math.min(6, step));
+  const incubatorLayout = document.querySelector(".incubator-layout");
+  if (incubatorLayout) {
+    incubatorLayout.setAttribute("data-active-step", String(incubatorState.currentStep));
+  }
   document.querySelectorAll(".incubate-step").forEach(node => {
     node.classList.toggle("active", Number(node.dataset.step) === incubatorState.currentStep);
   });
@@ -1121,6 +1189,7 @@ function setIncubatorStep(step) {
   document.getElementById("btn-skip-step")?.classList.toggle("hidden", incubatorState.currentStep === 2 || incubatorState.currentStep === 6);
   updateStepChips();
   updateSeedPreview();
+  scheduleIncubatorAlignment();
 }
 
 function renderValueSortList() {
@@ -1155,20 +1224,41 @@ function buildBaseAgents() {
   return [
     {
       id: `a-${Date.now()}-1`,
-      name: "理性偏移",
-      offsets: { rationality: 20, risk: -8, emotion: -12 }
+      name: "理性",
+      offsets: { rationality: 24, risk: -10, emotion: -16 }
     },
     {
       id: `a-${Date.now()}-2`,
-      name: "感性偏移",
-      offsets: { rationality: -12, risk: 2, emotion: 20 }
+      name: "冒险",
+      offsets: { rationality: -2, risk: 24, emotion: 6 }
     },
     {
       id: `a-${Date.now()}-3`,
-      name: "冒险偏移",
-      offsets: { rationality: 4, risk: 22, emotion: 8 }
+      name: "情绪",
+      offsets: { rationality: -14, risk: 4, emotion: 24 }
+    },
+    {
+      id: `a-${Date.now()}-4`,
+      name: "感性",
+      offsets: { rationality: -8, risk: 2, emotion: 14 }
+    },
+    {
+      id: `a-${Date.now()}-5`,
+      name: "谨慎",
+      offsets: { rationality: 10, risk: -22, emotion: -8 }
     }
   ];
+}
+
+function ensureFiveBaseAgents(list) {
+  const next = Array.isArray(list) ? [...list] : [];
+  const templates = buildBaseAgents();
+  const hasName = name => next.some(item => String(item?.name || "").includes(name));
+  templates.forEach(template => {
+    if (next.length >= 5) return;
+    if (!hasName(template.name)) next.push(template);
+  });
+  return next.slice(0, 5);
 }
 
 function getIncubatorArchetype(agent) {
@@ -1286,6 +1376,7 @@ function hydrateIncubatorFromUser(user) {
         emotion: Number(item.offsets?.emotion || 0)
       }
     }));
+    incubatorState.customAgents = ensureFiveBaseAgents(incubatorState.customAgents);
   } else {
     incubatorState.customAgents = buildBaseAgents();
   }
@@ -1797,8 +1888,8 @@ function validateStep(step) {
     }
   }
   if (step === 6) {
-    if (!incubatorState.customAgents.length) {
-      alert("请先生成至少 3 个 Agent。");
+    if (incubatorState.customAgents.length < 5) {
+      alert("请先生成 5 个 Agent。");
       return false;
     }
   }
@@ -1921,6 +2012,9 @@ function initIncubator() {
   renderIncubatorPool();
   syncSelectedAgentEditor();
   setIncubatorStep(1);
+  window.addEventListener("resize", () => {
+    requestAnimationFrame(syncIncubatorSideAlignment);
+  });
 }
 
 function updateClock() {
@@ -2140,18 +2234,18 @@ function seedInitialChat() {
   if (!chat || chat.children.length > 0) return;
   appendMessage({
     sender: "agent",
-    agentName: "理性+",
+    agentName: "理性",
     content: "建议先量化风险，列出 3 种情景。",
     theme: "theme-rational"
   });
-  recordDialogMessage({ sender: "agent", agentName: "理性+", content: "建议先量化风险，列出 3 种情景。" });
+  recordDialogMessage({ sender: "agent", agentName: "理性", content: "建议先量化风险，列出 3 种情景。" });
   appendMessage({
     sender: "agent",
-    agentName: "冒险+",
+    agentName: "冒险",
     content: "窗口期有限，建议先占位后优化。",
     theme: "theme-risk"
   });
-  recordDialogMessage({ sender: "agent", agentName: "冒险+", content: "窗口期有限，建议先占位后优化。" });
+  recordDialogMessage({ sender: "agent", agentName: "冒险", content: "窗口期有限，建议先占位后优化。" });
   appendMessage({
     sender: "user",
     content: "可以展开说说市场进入的阻力吗？"
