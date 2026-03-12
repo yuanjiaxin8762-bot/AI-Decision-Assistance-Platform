@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 PROJECT_ROOT = Path(__file__).resolve().parent
+LOCAL_ENV_FILE = PROJECT_ROOT / ".env.local"
 
 app = FastAPI(title="Persona Switch Proxy")
 
@@ -36,6 +37,27 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
 
 
+def load_deepseek_api_key() -> str:
+    env_value = os.getenv(DEEPSEEK_API_KEY_ENV, "").strip()
+    if env_value:
+        return env_value
+
+    if not LOCAL_ENV_FILE.exists():
+        return ""
+
+    try:
+        for raw_line in LOCAL_ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() == DEEPSEEK_API_KEY_ENV:
+                return value.strip().strip("'\"")
+    except Exception:
+        return ""
+    return ""
+
+
 @app.get("/api/health")
 async def health() -> dict:
     return {"ok": True}
@@ -43,7 +65,7 @@ async def health() -> dict:
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> dict:
-    api_key = os.getenv(DEEPSEEK_API_KEY_ENV, "").strip()
+    api_key = load_deepseek_api_key()
     if not api_key:
         raise HTTPException(status_code=500, detail="后端未配置 DEEPSEEK_API_KEY")
     if not req.messages:

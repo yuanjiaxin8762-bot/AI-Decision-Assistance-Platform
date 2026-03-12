@@ -740,6 +740,18 @@ textarea {
   border-radius: 12px;
   padding: 8px 10px;
   background: rgba(255,255,255,0.03);
+  cursor: grab;
+  user-select: none;
+}
+.value-card:active {
+  cursor: grabbing;
+}
+.value-card.dragging {
+  opacity: 0.65;
+}
+.value-card.drag-over {
+  border-color: rgba(51, 225, 255, 0.75);
+  box-shadow: 0 0 0 1px rgba(51, 225, 255, 0.25), 0 8px 20px rgba(51, 225, 255, 0.12);
 }
 .value-card button {
   border: none;

@@ -10,7 +10,7 @@ let agents = [...DEFAULT_AGENTS];
 
 const STORAGE_USERS = "persona_switch_users";
 const STORAGE_SESSION = "persona_switch_session";
-const DEEPSEEK_PROXY_ENDPOINT = "/api/chat";
+const DEEPSEEK_PROXY_ENDPOINT = "http://127.0.0.1:8010/api/chat";
 const DEEPSEEK_MODEL = "deepseek-chat";
 const TRAIT_KEYS = ["rationality", "risk", "altruism", "horizon", "autonomy"];
 const TRAIT_LABELS = {
@@ -568,6 +568,48 @@ function emotionFromInput(text) {
   return "calm";
 }
 
+function formatModelError(err) {
+  const msg = String(err?.message || "").trim();
+  if (!msg) return "模型调用失败";
+  const compact = msg.replace(/\s+/g, " ");
+  if (compact.length <= 120) return compact;
+  return `${compact.slice(0, 117)}...`;
+}
+
+function buildUserContextSummary() {
+  const profile = incubatorState.profile || {};
+  const traits = incubatorState.traits || {};
+  const values = incubatorState.values || [];
+  const principles = incubatorState.principles || {};
+  const selectedExps = (incubatorState.experiences || []).filter(item => item.selected).map(item => item.title);
+  const timeline = (incubatorState.timeline || []).slice().sort((a, b) => b.year - a.year).slice(0, 3);
+  const scenarioDone = (incubatorState.scenarios || []).filter(item => item.answer).map(item => `${item.q}=>${item.answer}`);
+
+  return [
+    `基础画像: 昵称=${profile.nickname || "未填"}, 年龄=${profile.age || "未填"}, 职业=${profile.job || "未填"}, 教育=${profile.edu || "未填"}, 地点=${profile.location || "未填"}, 自述=${profile.intro || "未填"}`,
+    `五维特征: 理性=${traits.rationality}, 冒险=${traits.risk}, 利他=${traits.altruism}, 长期=${traits.horizon}, 自主=${traits.autonomy}`,
+    `价值观Top5: ${values.slice(0, 5).join(" > ") || "未填"}`,
+    `原则陈述: P1=${principles.p1 || "未填"}; P2=${principles.p2 || "未填"}; 过程vs结果=${principles.justice}; 集体vs个人=${principles.collective}`,
+    `经历锚点: ${selectedExps.join("；") || "未填"}`,
+    `时间轴近三条: ${timeline.map(item => `${item.year}-${item.title}(${item.result})`).join("；") || "未填"}`,
+    `情境测试已答: ${scenarioDone.join("；") || "未填"}`
+  ].join("\n");
+}
+
+function buildAgentDirective(agent) {
+  const name = String(agent?.name || "");
+  const custom = (incubatorState.customAgents || []).find(item => item.name === name);
+  const offsets = custom?.offsets || {};
+  const offsetText = `理性偏移=${Number(offsets.rationality || 0)}, 冒险偏移=${Number(offsets.risk || 0)}, 情绪偏移=${Number(offsets.emotion || 0)}`;
+
+  if (name.includes("理性")) return `风格要求: 数据先行、结构化论证、强调可验证路径。${offsetText}`;
+  if (name.includes("冒险")) return `风格要求: 抢窗口、重行动、强调机会成本与速度。${offsetText}`;
+  if (name.includes("情绪")) return `风格要求: 高共情、关注主观压力与关系影响。${offsetText}`;
+  if (name.includes("感性")) return `风格要求: 关注直觉与体验信号，给出柔性策略。${offsetText}`;
+  if (name.includes("谨慎")) return `风格要求: 风险防守优先，强调止损与下限保护。${offsetText}`;
+  return `风格要求: 保持差异化视角，避免与其他Agent重复。${offsetText}`;
+}
+
 function updateNetStatus(text, tone = "normal") {
   const node = document.getElementById("net-status");
   if (!node) return;
@@ -599,15 +641,20 @@ function getRecentDialogMessages(limit = 14) {
 
 function buildAgentSystemPrompt(agent) {
   const persona = resolvePersona(agent);
+  const userContext = buildUserContextSummary();
+  const agentDirective = buildAgentDirective(agent);
   return [
-    "你是 Persona Switch 的多Agent成员之一，请使用中文简体回复。",
+    "你是 Persona Switch 的多Agent成员之一，请使用中文简体回复，并严格基于用户画像输出。",
     `你的身份：${agent.name}，人格风格：${persona.moodLabel}。`,
+    agentDirective,
+    "以下是用户六步孵化信息（必须引用这些信息，不可空泛）：",
+    userContext,
     "任务：针对用户问题给出可执行建议、风险提示和下一步动作。",
-    "要求：",
-    "1) 回复结构清晰，先结论后理由；",
-    "2) 尽量给出 2-4 条要点；",
-    "3) 与其他Agent保持差异化视角，不重复空话；",
-    "4) 内容要具体，避免泛泛而谈。"
+    "输出要求：",
+    "1) 必须体现与你身份匹配的视角，不要和其他Agent雷同；",
+    "2) 明确引用至少2条用户画像信息（如价值观、经历、五维分数、原则陈述）；",
+    "3) 先给结论，再给理由，最后给下一步；",
+    "4) 不要说你是AI，不要输出模板化套话。"
   ].join("\n");
 }
 
@@ -873,8 +920,8 @@ async function mockDebate() {
         });
         updateNetStatus("模型：DeepSeek 已连接", "ok");
       } catch (err) {
-        result = "我建议先验证关键假设，再决定是否扩大投入。";
-        updateNetStatus("模型：请求失败，已回退", "error");
+        result = `【模型连接失败】${formatModelError(err)}。请检查 DeepSeek Key 或网络后重试。`;
+        updateNetStatus("模型：请求失败，请检查后端配置", "error");
         console.error(err);
       }
 
@@ -924,8 +971,8 @@ async function parallelAgentReply(prompt, options = {}) {
         result = await callDeepSeekChat(agent, prompt);
         updateNetStatus("模型：DeepSeek 已连接", "ok");
       } catch (err) {
-        result = `基于你的问题「${prompt.slice(0, 18)}${prompt.length > 18 ? "..." : ""}」，我建议先做小范围验证，再决定资源分配。`;
-        updateNetStatus("模型：请求失败，已回退", "error");
+        result = `【模型连接失败】${formatModelError(err)}。请检查 DeepSeek Key 或网络后重试。`;
+        updateNetStatus("模型：请求失败，请检查后端配置", "error");
         console.error(err);
       }
 
@@ -1196,11 +1243,11 @@ function renderValueSortList() {
   const root = document.getElementById("value-sort-list");
   if (!root) return;
   root.innerHTML = incubatorState.values.map((value, idx) => `
-    <div class="value-card">
+    <div class="value-card" data-value-index="${idx}" draggable="true">
       <span>${idx + 1}. ${value}</span>
       <span>
-        <button data-value-up="${idx}">↑</button>
-        <button data-value-down="${idx}">↓</button>
+        <button type="button" data-value-up="${idx}" draggable="false">↑</button>
+        <button type="button" data-value-down="${idx}" draggable="false">↓</button>
       </span>
     </div>
   `).join("");
@@ -1253,12 +1300,49 @@ function buildBaseAgents() {
 function ensureFiveBaseAgents(list) {
   const next = Array.isArray(list) ? [...list] : [];
   const templates = buildBaseAgents();
-  const hasName = name => next.some(item => String(item?.name || "").includes(name));
-  templates.forEach(template => {
-    if (next.length >= 5) return;
-    if (!hasName(template.name)) next.push(template);
+  const order = ["理性", "冒险", "情绪", "感性", "谨慎"];
+  const picked = {};
+
+  const resolveCanonicalName = item => {
+    const rawName = String(item?.name || "");
+    if (rawName.includes("谨慎") || rawName.includes("守护")) return "谨慎";
+    if (rawName.includes("冒险")) return "冒险";
+    if (rawName.includes("情绪")) return "情绪";
+    if (rawName.includes("感性") || rawName.includes("直觉")) return "感性";
+    if (rawName.includes("理性")) return "理性";
+
+    const rational = Number(item?.offsets?.rationality || 0);
+    const risk = Number(item?.offsets?.risk || 0);
+    const emotion = Number(item?.offsets?.emotion || 0);
+    if (risk <= -12) return "谨慎";
+    if (risk >= 12) return "冒险";
+    if (emotion >= 20) return "情绪";
+    if (emotion >= 10) return "感性";
+    if (rational >= 12) return "理性";
+    return "";
+  };
+
+  next.forEach((item, idx) => {
+    const canonicalName = resolveCanonicalName(item);
+    if (!canonicalName || picked[canonicalName]) return;
+    picked[canonicalName] = {
+      id: item?.id || `a-${Date.now()}-${idx + 1}`,
+      name: canonicalName,
+      offsets: {
+        rationality: Number(item?.offsets?.rationality || 0),
+        risk: Number(item?.offsets?.risk || 0),
+        emotion: Number(item?.offsets?.emotion || 0)
+      }
+    };
   });
-  return next.slice(0, 5);
+
+  templates.forEach(template => {
+    if (!picked[template.name]) {
+      picked[template.name] = template;
+    }
+  });
+
+  return order.map(name => picked[name]).filter(Boolean).slice(0, 5);
 }
 
 function getIncubatorArchetype(agent) {
@@ -1679,24 +1763,78 @@ function bindBaseProfileActions() {
 }
 
 function bindValueCompass() {
-  document.getElementById("value-sort-list")?.addEventListener("click", evt => {
+  const root = document.getElementById("value-sort-list");
+  if (!root) return;
+
+  const moveValue = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    if (fromIdx < 0 || toIdx < 0) return;
+    if (fromIdx >= incubatorState.values.length || toIdx >= incubatorState.values.length) return;
+    const [moved] = incubatorState.values.splice(fromIdx, 1);
+    incubatorState.values.splice(toIdx, 0, moved);
+    renderValueSortList();
+    updateSeedPreview();
+  };
+
+  let draggingIndex = -1;
+
+  root.addEventListener("click", evt => {
     const up = evt.target.dataset.valueUp;
     const down = evt.target.dataset.valueDown;
     if (up !== undefined) {
       const idx = Number(up);
       if (idx <= 0) return;
-      [incubatorState.values[idx - 1], incubatorState.values[idx]] = [incubatorState.values[idx], incubatorState.values[idx - 1]];
-      renderValueSortList();
-      updateSeedPreview();
+      moveValue(idx, idx - 1);
       return;
     }
     if (down !== undefined) {
       const idx = Number(down);
       if (idx >= incubatorState.values.length - 1) return;
-      [incubatorState.values[idx + 1], incubatorState.values[idx]] = [incubatorState.values[idx], incubatorState.values[idx + 1]];
-      renderValueSortList();
-      updateSeedPreview();
+      moveValue(idx, idx + 1);
     }
+  });
+
+  root.addEventListener("dragstart", evt => {
+    const card = evt.target.closest(".value-card");
+    if (!card) return;
+    draggingIndex = Number(card.dataset.valueIndex);
+    if (!Number.isFinite(draggingIndex)) return;
+    card.classList.add("dragging");
+    if (evt.dataTransfer) {
+      evt.dataTransfer.effectAllowed = "move";
+      evt.dataTransfer.setData("text/plain", String(draggingIndex));
+    }
+  });
+
+  root.addEventListener("dragover", evt => {
+    const card = evt.target.closest(".value-card");
+    if (!card) return;
+    evt.preventDefault();
+    card.classList.add("drag-over");
+  });
+
+  root.addEventListener("dragleave", evt => {
+    const card = evt.target.closest(".value-card");
+    if (!card) return;
+    card.classList.remove("drag-over");
+  });
+
+  root.addEventListener("drop", evt => {
+    const card = evt.target.closest(".value-card");
+    if (!card) return;
+    evt.preventDefault();
+    const toIdx = Number(card.dataset.valueIndex);
+    card.classList.remove("drag-over");
+    if (!Number.isFinite(toIdx) || !Number.isFinite(draggingIndex)) return;
+    moveValue(draggingIndex, toIdx);
+    draggingIndex = -1;
+  });
+
+  root.addEventListener("dragend", () => {
+    draggingIndex = -1;
+    root.querySelectorAll(".value-card").forEach(card => {
+      card.classList.remove("dragging", "drag-over");
+    });
   });
 
   document.getElementById("principle-1")?.addEventListener("input", e => { incubatorState.principles.p1 = e.target.value; updateSeedPreview(); });
